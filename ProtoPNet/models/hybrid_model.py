@@ -17,12 +17,30 @@ class ProtoCLIP(nn.Module):
     Trained with contrastive learning on image-text pairs.
 
     Args:
-        num_prototypes: Number of prototypes for image encoder
-        image_backbone: ResNet architecture for image encoder
-        text_model: CLIP text model name
-        embedding_dim: Shared embedding dimension (512 for CLIP)
-        freeze_text_encoder: Whether to freeze text encoder initially
-        temperature: Temperature parameter for contrastive loss
+        num_prototypes: Number of prototypes for image encoder (default: 200)
+        image_backbone: ResNet architecture for image encoder (default: 'resnet50')
+        text_model: CLIP text model name (default: 'openai/clip-vit-base-patch32')
+        embedding_dim: Shared embedding dimension (default: 512 for CLIP)
+        freeze_text_encoder: Whether to freeze text encoder initially (default: True)
+        temperature: Temperature parameter for contrastive loss (default: 0.07)
+        pooling_mode: Prototype pooling method: 'max' or 'attention' (default: 'max')
+        pretrained_protoclip_path: Path to Proto-CLIP checkpoint directory (default: None)
+            If provided, initializes prototypes from Proto-CLIP's visual memory bank
+            Example: './pretrained_checkpoints/proto_clip_imagenet/'
+        protoclip_sampling_method: How to subsample Proto-CLIP prototypes (default: 'kmeans')
+            Options: 'kmeans', 'random', 'first'
+            Proto-CLIP has 16,000 prototypes, this selects num_prototypes from them
+
+    Example:
+        # Create model with random initialization
+        model = ProtoCLIP(num_prototypes=200)
+
+        # Create model with Proto-CLIP pretrained initialization
+        model = ProtoCLIP(
+            num_prototypes=200,
+            pretrained_protoclip_path='./pretrained_checkpoints/proto_clip_imagenet/',
+            protoclip_sampling_method='kmeans'  # Use K-means to select representative prototypes
+        )
     """
 
     def __init__(
@@ -33,7 +51,9 @@ class ProtoCLIP(nn.Module):
         embedding_dim=512,
         freeze_text_encoder=True,
         temperature=0.07,
-        pooling_mode='max'
+        pooling_mode='max',
+        pretrained_protoclip_path=None,
+        protoclip_sampling_method='kmeans'
     ):
         super().__init__()
 
@@ -57,6 +77,13 @@ class ProtoCLIP(nn.Module):
 
         # Learnable temperature (can be fixed or learnable)
         self.logit_scale = nn.Parameter(torch.ones([]) * (1 / temperature))
+
+        # Load Proto-CLIP pretrained weights if provided
+        if pretrained_protoclip_path is not None:
+            self._load_protoclip_weights(
+                pretrained_protoclip_path,
+                sampling_method=protoclip_sampling_method
+            )
 
     def encode_image(self, images, return_similarities=False):
         """Encode images to embeddings"""
@@ -111,3 +138,25 @@ class ProtoCLIP(nn.Module):
     def set_prototypes(self, new_prototypes):
         """Update prototype vectors"""
         self.image_encoder.set_prototypes(new_prototypes)
+
+    def _load_protoclip_weights(self, checkpoint_dir, sampling_method='kmeans'):
+        """
+        Load Proto-CLIP pretrained weights into model.
+
+        Args:
+            checkpoint_dir: Directory containing Proto-CLIP checkpoints
+            sampling_method: How to subsample prototypes ('random', 'kmeans', 'first')
+
+        Returns:
+            dict: Loading statistics
+        """
+        from ..utils.checkpoint_converter import quick_load_protoclip
+
+        stats = quick_load_protoclip(
+            self,
+            checkpoint_dir=checkpoint_dir,
+            sampling_method=sampling_method,
+            verbose=True
+        )
+
+        return stats

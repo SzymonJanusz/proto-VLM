@@ -56,13 +56,26 @@ class PrototypeLayer(nn.Module):
         # Reshape features: (B, C, H, W) -> (B, H*W, C)
         features_flat = features.view(B, C, H * W).permute(0, 2, 1)  # (B, H*W, C)
 
-        # Compute L2 distance between each feature patch and each prototype
-        # Using broadcasting: (B, H*W, 1, C) - (1, 1, M, C)
-        features_expanded = features_flat.unsqueeze(2)  # (B, H*W, 1, C)
-        prototypes_expanded = self.prototype_vectors.unsqueeze(0).unsqueeze(0)  # (1, 1, M, C)
+        # Memory-efficient L2 distance computation using:
+        # ||a - b||^2 = ||a||^2 + ||b||^2 - 2<a, b>
+        # This avoids creating a huge (B, H*W, M, C) intermediate tensor
 
-        # L2 distance squared
-        distances = torch.sum((features_expanded - prototypes_expanded) ** 2, dim=3)  # (B, H*W, M)
+        # Compute ||features||^2 for each patch: (B, H*W)
+        features_norm_sq = torch.sum(features_flat ** 2, dim=2)  # (B, H*W)
+
+        # Compute ||prototypes||^2 for each prototype: (M,)
+        prototypes_norm_sq = torch.sum(self.prototype_vectors ** 2, dim=1)  # (M,)
+
+        # Compute dot product: features @ prototypes.T -> (B, H*W, M)
+        dot_product = torch.matmul(features_flat, self.prototype_vectors.t())  # (B, H*W, M)
+
+        # L2 distance squared: ||a||^2 + ||b||^2 - 2<a, b>
+        # Broadcasting: (B, H*W, 1) + (1, 1, M) - (B, H*W, M)
+        distances = (
+            features_norm_sq.unsqueeze(2) +  # (B, H*W, 1)
+            prototypes_norm_sq.unsqueeze(0).unsqueeze(0) -  # (1, 1, M)
+            2 * dot_product  # (B, H*W, M)
+        )  # Result: (B, H*W, M)
 
         # Convert to similarity (inverted distance)
         # Note: negative distance so higher = more similar
