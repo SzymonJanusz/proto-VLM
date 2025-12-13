@@ -1,0 +1,53 @@
+# Base configuration for ProtoCLIP training
+
+model:
+  num_prototypes: 200
+  image_backbone: 'resnet50'
+  text_model: 'openai/clip-vit-base-patch32'
+  embedding_dim: 512
+  freeze_text_encoder: true
+  temperature: 0.07
+  pooling_mode: 'max'  # 'max' or 'attention'
+
+training:
+  # Stage 1: Warmup
+  warmup_epochs: 10
+  warmup_lr: 0.0001
+  warmup_lr_prototypes: 0.001
+
+  # Stage 2: Projection (no training, just update prototypes)
+
+  # Stage 3: Fine-tuning
+  finetune_epochs: 10
+  finetune_lr: 0.00001
+  unfreeze_text_encoder: false  # Set to true for task-specific adaptation
+
+  batch_size: 64
+  num_workers: 4
+  gradient_clip: 1.0
+
+loss:
+  lambda_contrastive: 1.0
+  lambda_clustering: 0.01
+  lambda_activation: 0.01
+  use_clustering: true
+  use_activation: true
+
+data:
+  image_size: 224
+  train_data: '/path/to/train.json'
+  val_data: '/path/to/val.json'
+
+  # Data augmentation
+  augmentation:
+    random_crop: true
+    random_flip: true
+    color_jitter: true
+    normalize_mean: [0.485, 0.456, 0.406]
+    normalize_std: [0.229, 0.224, 0.225]
+
+logging:
+  log_interval: 100
+  save_interval: 1  # Save checkpoint every N epochs
+  checkpoint_dir: './checkpoints'
+  visualization_dir: './visualizations'
