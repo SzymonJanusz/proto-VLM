@@ -21,6 +21,8 @@ class ProtoPNetEncoder(nn.Module):
         backbone_arch: ResNet architecture ('resnet50', 'resnet34')
         embedding_dim: Output embedding dimension (512 for CLIP)
         pooling_mode: 'max' or 'attention'
+        pretrained_backbone: Whether to use pretrained weights for backbone
+        dropout_rate: Dropout probability in projection head (default: 0.5)
     """
 
     def __init__(
@@ -29,7 +31,8 @@ class ProtoPNetEncoder(nn.Module):
         backbone_arch='resnet50',
         embedding_dim=512,
         pooling_mode='max',
-        pretrained_backbone=True
+        pretrained_backbone=True,
+        dropout_rate=0.5
     ):
         super().__init__()
 
@@ -55,11 +58,14 @@ class ProtoPNetEncoder(nn.Module):
         self.pooling = WeightedPooling(pooling_mode=pooling_mode)
 
         # 4. Projection Head (prototypes -> CLIP embedding space)
+        # Enhanced with batch normalization and configurable dropout
         self.projection_head = nn.Sequential(
             nn.Linear(num_prototypes, 1024),
+            nn.BatchNorm1d(1024),
             nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(1024, embedding_dim)
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(1024, embedding_dim),
+            nn.BatchNorm1d(embedding_dim)
         )
 
         # Initialize projection head

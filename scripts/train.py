@@ -12,7 +12,7 @@ Usage:
         --imagenet_root /path/to/imagenet \
         --pretrained_protoclip ./pretrained_checkpoints/proto_clip_imagenet \
         --use_subset \
-    --subset_samples 1000down0
+    --subset_samples 10000
 
     # Train from scratch (random initialization)
     python scripts/train.py \
@@ -35,7 +35,7 @@ import argparse
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
 from ProtoPNet.models.hybrid_model import ProtoCLIP
 from ProtoPNet.training.trainer import ProtoCLIPTrainer
@@ -45,6 +45,7 @@ from ProtoPNet.data.caption_generator import (
     ImageNetCaptionGenerator,
     download_imagenet_class_mapping
 )
+from ProtoPNet.utils.early_stopping import EarlyStopping
 
 
 def parse_args():
@@ -89,8 +90,30 @@ def parse_args():
                         help='Number of fine-tuning epochs (Stage 3)')
     parser.add_argument('--finetune_lr', type=float, default=1e-5,
                         help='Learning rate for fine-tuning')
+    parser.add_argument('--finetune_weight_decay', type=float, default=0.01,
+                        help='Weight decay for fine-tuning (L2 regularization)')
+    parser.add_argument('--finetune_dropout', type=float, default=0.5,
+                        help='Dropout rate for projection head during fine-tuning')
+    parser.add_argument('--finetune_warmup_epochs', type=int, default=2,
+                        help='LR warmup epochs for fine-tuning (0 to disable)')
+    parser.add_argument('--finetune_patience', type=int, default=5,
+                        help='Early stopping patience (epochs without improvement)')
+    parser.add_argument('--finetune_min_delta', type=float, default=0.0,
+                        help='Minimum validation loss improvement to reset patience')
+    parser.add_argument('--finetune_lambda_clustering', type=float, default=0.005,
+                        help='Clustering loss weight during fine-tuning (0 to disable)')
+    parser.add_argument('--finetune_lambda_activation', type=float, default=0.005,
+                        help='Activation loss weight during fine-tuning (0 to disable)')
     parser.add_argument('--unfreeze_text_encoder', action='store_true',
                         help='Unfreeze text encoder during fine-tuning (may hurt zero-shot)')
+
+    # Training arguments - Stage 2 (Projection)
+    parser.add_argument('--projection_max_batches', type=int, default=None,
+                        help='Max batches for projection (None = use all)')
+    parser.add_argument('--projection_visualize', action='store_true',
+                        help='Generate prototype visualizations after projection')
+    parser.add_argument('--projection_num_viz', type=int, default=20,
+                        help='Number of prototypes to visualize')
 
     # Loss weights
     parser.add_argument('--lambda_contrastive', type=float, default=1.0,
@@ -167,7 +190,8 @@ def create_model(args):
         temperature=0.07,
         pooling_mode=args.pooling_mode,
         pretrained_protoclip_path=args.pretrained_protoclip,
-        protoclip_sampling_method=args.sampling_method
+        protoclip_sampling_method=args.sampling_method,
+        dropout_rate=args.finetune_dropout
     )
 
     # Print model info
@@ -326,33 +350,75 @@ def stage2_projection(model, train_loader, args):
     print("STAGE 2: PROTOTYPE PROJECTION")
     print("=" * 70)
 
-    # TODO: Implement PrototypeProjector
-    # For now, we'll skip this stage and add a warning
-    print("\n⚠️  WARNING: Prototype projection not yet implemented!")
-    print("Prototypes will remain as learned during warmup.")
-    print("\nTo implement projection:")
-    print("  1. Create ProtoPNet/utils/projection.py")
-    print("  2. Implement PrototypeProjector class")
-    print("  3. Find nearest training patches for each prototype")
-    print("  4. Replace prototype vectors with patch features")
-
-    # Placeholder for when projection.py is implemented:
-    """
     from ProtoPNet.utils.projection import PrototypeProjector
+    from ProtoPNet.utils.visualization import visualize_prototypes, save_prototype_grid
+    from ProtoPNet.data.transforms import get_val_transforms
+    from ProtoPNet.data.imagenet_dataset import create_imagenet_loaders
 
-    projector = PrototypeProjector(model, train_loader, device=args.device)
-    new_prototypes, projection_info = projector.project_prototypes()
+    # Create projection-specific data loader with validation transforms (no augmentation)
+    print("\nCreating projection data loader (using validation transforms)...")
+    projection_loader, _ = create_imagenet_loaders(
+        imagenet_root=args.imagenet_root,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        train_transform=get_val_transforms(),  # Use val transforms for stable features
+        val_transform=get_val_transforms(),
+        use_subset=args.use_subset,
+        subset_samples=args.subset_samples,
+        caption_generator=None  # Don't need captions for projection
+    )
 
-    # Replace prototypes with projected ones
-    model.image_encoder.set_prototypes(new_prototypes)
+    # Create projector
+    projector = PrototypeProjector(
+        model=model,
+        device=args.device
+    )
 
-    # Save projection info for visualization
-    import pickle
-    with open(f"{args.checkpoint_dir}/projection_info.pkl", 'wb') as f:
-        pickle.dump(projection_info, f)
+    # Project prototypes
+    print(f"\nProjecting {model.image_encoder.num_prototypes} prototypes...")
+    new_prototypes, projection_info = projector.project_prototypes(
+        projection_loader,
+        num_batches=args.projection_max_batches
+    )
 
-    print(f"✓ Projected {len(new_prototypes)} prototypes to training patches")
-    """
+    # Update model with projected prototypes
+    model.set_prototypes(new_prototypes)
+    print(f"\n✓ Prototypes replaced with training patches")
+
+    # Save projection metadata
+    projector.save_projection(
+        save_dir=args.checkpoint_dir,
+        projection_info=projection_info
+    )
+
+    # Print summary statistics
+    stats = projection_info['projection_stats']
+    print(f"\nProjection Statistics:")
+    print(f"  Batches processed: {stats['total_batches']}")
+    print(f"  Patches searched: {stats['total_patches']:,}")
+    print(f"  Mean distance: {stats['mean_distance']:.4f}")
+    print(f"  Median distance: {stats['median_distance']:.4f}")
+    print(f"  Distance range: [{stats['min_distance']:.4f}, {stats['max_distance']:.4f}]")
+
+    # Generate visualizations if requested
+    if args.projection_visualize:
+        print(f"\nGenerating visualizations for {args.projection_num_viz} prototypes...")
+        try:
+            visualize_prototypes(
+                projection_info=projection_info,
+                output_dir=args.checkpoint_dir,
+                num_prototypes=args.projection_num_viz
+            )
+
+            # Also create a grid image
+            save_prototype_grid(
+                projection_info=projection_info,
+                output_dir=args.checkpoint_dir,
+                grid_size=(5, 4)  # 5 rows x 4 cols = 20 prototypes
+            )
+        except Exception as e:
+            print(f"⚠️  Warning: Visualization failed with error: {e}")
+            print("   Continuing without visualizations...")
 
     return model
 
@@ -369,6 +435,10 @@ def stage3_finetune(model, train_loader, val_loader, args):
     print("=" * 70)
     print(f"Epochs: {args.finetune_epochs}")
     print(f"LR: {args.finetune_lr}")
+    print(f"Weight decay: {args.finetune_weight_decay}")
+    print(f"Dropout: {args.finetune_dropout}")
+    print(f"Warmup epochs: {args.finetune_warmup_epochs}")
+    print(f"Early stopping patience: {args.finetune_patience}")
     print(f"Unfreeze text encoder: {args.unfreeze_text_encoder}")
 
     # Freeze backbone and prototypes
@@ -385,31 +455,60 @@ def stage3_finetune(model, train_loader, val_loader, args):
         model.text_encoder.unfreeze()
         print("✓ Text encoder unfrozen")
 
-    # Create optimizer (only projection head + optionally text encoder)
+    # Create optimizer with weight decay for regularization
     params_to_optimize = [
-        {'params': model.image_encoder.projection_head.parameters(), 'lr': args.finetune_lr}
+        {
+            'params': model.image_encoder.projection_head.parameters(),
+            'lr': args.finetune_lr,
+            'weight_decay': args.finetune_weight_decay
+        }
     ]
 
     if args.unfreeze_text_encoder:
         params_to_optimize.append({
             'params': model.text_encoder.parameters(),
-            'lr': args.finetune_lr / 10  # Lower LR for text encoder
+            'lr': args.finetune_lr / 10,  # Lower LR for text encoder
+            'weight_decay': args.finetune_weight_decay * 0.1  # Lower weight decay for pretrained encoder
         })
 
     optimizer = AdamW(params_to_optimize)
 
-    # Create learning rate scheduler
-    scheduler = CosineAnnealingLR(
-        optimizer,
-        T_max=args.finetune_epochs,
-        eta_min=args.finetune_lr / 10
-    )
+    # Create learning rate scheduler with warmup
+    if args.finetune_warmup_epochs > 0:
+        # Warmup scheduler: gradually increase LR from 0 to target
+        warmup_scheduler = LinearLR(
+            optimizer,
+            start_factor=0.01,  # Start at 1% of target LR
+            end_factor=1.0,
+            total_iters=args.finetune_warmup_epochs
+        )
 
-    # Create loss function (no auxiliary losses)
+        # Main scheduler: cosine decay after warmup
+        cosine_scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=args.finetune_epochs - args.finetune_warmup_epochs,
+            eta_min=args.finetune_lr / 10
+        )
+
+        # Combine warmup + cosine decay
+        scheduler = SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[args.finetune_warmup_epochs]
+        )
+    else:
+        # No warmup, just cosine decay
+        scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=args.finetune_epochs,
+            eta_min=args.finetune_lr / 10
+        )
+
+    # Create loss function with optional auxiliary losses for regularization
     loss_fn = CombinedLoss(
         lambda_contrastive=1.0,
-        lambda_clustering=0.0,
-        lambda_activation=0.0
+        lambda_clustering=args.finetune_lambda_clustering,
+        lambda_activation=args.finetune_lambda_activation
     )
 
     # Create trainer
@@ -424,16 +523,22 @@ def stage3_finetune(model, train_loader, val_loader, args):
         checkpoint_dir=args.checkpoint_dir
     )
 
-    # Training loop
+    # Training loop with early stopping
     best_val_loss = float('inf')
+    early_stopping = EarlyStopping(
+        patience=args.finetune_patience,
+        min_delta=args.finetune_min_delta,
+        verbose=True
+    )
 
     for epoch in range(args.finetune_epochs):
         print(f"\n{'=' * 70}")
         print(f"Fine-tune Epoch {epoch + 1}/{args.finetune_epochs}")
         print(f"{'=' * 70}")
 
-        # Train
-        train_loss, _ = trainer.train_epoch(return_similarities=False)
+        # Train (compute similarities if auxiliary losses are enabled)
+        use_aux_losses = (args.finetune_lambda_clustering > 0 or args.finetune_lambda_activation > 0)
+        train_loss, _ = trainer.train_epoch(return_similarities=use_aux_losses)
         print(f"Train loss: {train_loss:.4f}")
 
         # Validate
@@ -444,7 +549,7 @@ def stage3_finetune(model, train_loader, val_loader, args):
         scheduler.step()
         print(f"LR: {scheduler.get_last_lr()[0]:.6f}")
 
-        # Save checkpoint
+        # Save checkpoint if best
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             trainer.save_checkpoint(
@@ -459,6 +564,12 @@ def stage3_finetune(model, train_loader, val_loader, args):
             epoch=epoch,
             stage='finetune'
         )
+
+        # Early stopping check
+        if early_stopping(val_loss, epoch):
+            print(f"\nEarly stopping at epoch {epoch + 1}")
+            print(f"Best validation loss: {best_val_loss:.4f} at epoch {early_stopping.best_epoch + 1}")
+            break
 
     print(f"\n✓ Fine-tuning complete! Best val loss: {best_val_loss:.4f}")
 
@@ -502,6 +613,9 @@ def main():
         checkpoint = torch.load(args.resume_from, map_location=args.device, weights_only=False)
         model.load_state_dict(checkpoint['model_state_dict'])
         print(f"Loaded from epoch {checkpoint.get('epoch', 'unknown')}")
+
+    # Move model to device
+    model = model.to(args.device)
 
     # Stage 1: Warmup
     if not args.skip_warmup:

@@ -30,6 +30,7 @@ class ProtoCLIP(nn.Module):
         protoclip_sampling_method: How to subsample Proto-CLIP prototypes (default: 'kmeans')
             Options: 'kmeans', 'random', 'first'
             Proto-CLIP has 16,000 prototypes, this selects num_prototypes from them
+        dropout_rate: Dropout probability in projection head (default: 0.5)
 
     Example:
         # Create model with random initialization
@@ -53,7 +54,8 @@ class ProtoCLIP(nn.Module):
         temperature=0.07,
         pooling_mode='max',
         pretrained_protoclip_path=None,
-        protoclip_sampling_method='kmeans'
+        protoclip_sampling_method='kmeans',
+        dropout_rate=0.5
     ):
         super().__init__()
 
@@ -66,7 +68,8 @@ class ProtoCLIP(nn.Module):
             backbone_arch=image_backbone,
             embedding_dim=embedding_dim,
             pooling_mode=pooling_mode,
-            pretrained_backbone=True
+            pretrained_backbone=True,
+            dropout_rate=dropout_rate
         )
 
         # Text encoder (CLIP)
