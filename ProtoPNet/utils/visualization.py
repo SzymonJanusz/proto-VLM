@@ -8,12 +8,58 @@ showing which training image patches each prototype corresponds to.
 import torch
 from pathlib import Path
 import pickle
+import json
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 from .projection import get_patch_bounding_box
 
 
-def visualize_prototypes(projection_info, output_dir, num_prototypes=20, img_size=224, feature_size=14):
+def load_class_names(class_mapping_file):
+    """
+    Load ImageNet class names from JSON file.
+
+    Args:
+        class_mapping_file: Path to JSON file with class mapping
+
+    Returns:
+        Dictionary mapping class_id (int) to class_name (str)
+    """
+    if class_mapping_file is None or not Path(class_mapping_file).exists():
+        return None
+
+    try:
+        with open(class_mapping_file, 'r') as f:
+            data = json.load(f)
+
+        # Handle different possible formats
+        if isinstance(data, dict):
+            # If it's a dict, try to convert keys to integers
+            class_names = {}
+            for key, value in data.items():
+                try:
+                    # Try to parse key as integer
+                    class_id = int(key)
+                    # Extract name from value (could be string or dict)
+                    if isinstance(value, str):
+                        class_names[class_id] = value
+                    elif isinstance(value, dict) and 'name' in value:
+                        class_names[class_id] = value['name']
+                    elif isinstance(value, list) and len(value) > 0:
+                        class_names[class_id] = value[0]
+                except (ValueError, TypeError):
+                    continue
+            return class_names
+        elif isinstance(data, list):
+            # If it's a list, use index as class_id
+            return {i: name for i, name in enumerate(data)}
+    except Exception as e:
+        print(f"Warning: Failed to load class names from {class_mapping_file}: {e}")
+        return None
+
+    return None
+
+
+def visualize_prototypes(projection_info, output_dir, num_prototypes=20, img_size=224, feature_size=14, class_mapping_file=None):
     """
     Generate HTML visualization of projected prototypes.
 
@@ -26,9 +72,13 @@ def visualize_prototypes(projection_info, output_dir, num_prototypes=20, img_siz
         num_prototypes: Number of prototypes to visualize (default: 20)
         img_size: Original image size (default: 224)
         feature_size: Feature map size (default: 14)
+        class_mapping_file: Path to JSON file with class names (optional)
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load class names if available
+    class_names = load_class_names(class_mapping_file)
 
     # Create subdirectory for prototype images
     proto_img_dir = output_dir / 'prototype_images'
@@ -74,6 +124,11 @@ def visualize_prototypes(projection_info, output_dir, num_prototypes=20, img_siz
             save_path = proto_img_dir / f'prototype_{proto_idx:03d}.jpg'
             img_with_box.save(save_path)
 
+            # Get class name if available
+            class_name = None
+            if class_names is not None and class_id in class_names:
+                class_name = class_names[class_id]
+
             proto_images.append({
                 'proto_idx': proto_idx,
                 'rank': rank + 1,
@@ -81,6 +136,7 @@ def visualize_prototypes(projection_info, output_dir, num_prototypes=20, img_siz
                 'patch_coords': (patch_h, patch_w),
                 'distance': distance,
                 'class_id': class_id,
+                'class_name': class_name,
                 'bbox': (top, left, bottom, right),
             })
 
@@ -294,6 +350,20 @@ def _generate_html_report(html_path, proto_images, projection_info):
                 <div class="info-row">
                     <span class="label">Prototype ID:</span>
                     <span class="value">{proto_data['proto_idx']}</span>
+                </div>"""
+
+    # Add class name if available
+    if proto_data.get('class_name'):
+        html_content += f"""
+                <div class="info-row">
+                    <span class="label">Class:</span>
+                    <span class="value" style="font-weight: bold; color: #4CAF50;">{proto_data['class_name']}</span>
+                </div>"""
+
+    html_content += f"""
+                <div class="info-row">
+                    <span class="label">Class ID:</span>
+                    <span class="value">{proto_data['class_id']}</span>
                 </div>
                 <div class="info-row">
                     <span class="label">Patch Coordinates:</span>
@@ -302,10 +372,6 @@ def _generate_html_report(html_path, proto_images, projection_info):
                 <div class="info-row">
                     <span class="label">Distance:</span>
                     <span class="value">{proto_data['distance']:.4f}</span>
-                </div>
-                <div class="info-row">
-                    <span class="label">Class ID:</span>
-                    <span class="value">{proto_data['class_id']}</span>
                 </div>
                 <div class="info-row">
                     <span class="label">Bounding Box:</span>

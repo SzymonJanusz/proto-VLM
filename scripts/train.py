@@ -407,7 +407,8 @@ def stage2_projection(model, train_loader, args):
             visualize_prototypes(
                 projection_info=projection_info,
                 output_dir=args.checkpoint_dir,
-                num_prototypes=args.projection_num_viz
+                num_prototypes=args.projection_num_viz,
+                class_mapping_file=args.class_mapping_file
             )
 
             # Also create a grid image
