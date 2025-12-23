@@ -123,7 +123,8 @@ class CombinedLoss(nn.Module):
         lambda_clustering=0.01,
         lambda_activation=0.01,
         use_clustering=True,
-        use_activation=True
+        use_activation=True,
+        label_smoothing=0.0
     ):
         super().__init__()
 
@@ -132,8 +133,15 @@ class CombinedLoss(nn.Module):
         self.lambda_activation = lambda_activation
         self.use_clustering = use_clustering
         self.use_activation = use_activation
+        self.label_smoothing = label_smoothing
 
-        self.contrastive_loss = ContrastiveLoss()
+        # Choose contrastive loss based on label smoothing
+        if label_smoothing > 0:
+            from .label_smoothing import LabelSmoothingContrastiveLoss
+            self.contrastive_loss = LabelSmoothingContrastiveLoss(epsilon=label_smoothing)
+        else:
+            self.contrastive_loss = ContrastiveLoss()
+
         if use_clustering:
             self.clustering_loss = PrototypeClusteringLoss()
         if use_activation:

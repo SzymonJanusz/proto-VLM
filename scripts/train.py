@@ -36,6 +36,8 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+from torch.utils.tensorboard import SummaryWriter
+from datetime import datetime
 
 from ProtoPNet.models.hybrid_model import ProtoCLIP
 from ProtoPNet.training.trainer import ProtoCLIPTrainer
@@ -84,6 +86,12 @@ def parse_args():
                         help='Learning rate for backbone in warmup (default: 1e-4 random, 5e-5 pretrained)')
     parser.add_argument('--warmup_lr_prototypes', type=float, default=None,
                         help='Learning rate for prototypes in warmup (default: 1e-3 random, 5e-4 pretrained)')
+    parser.add_argument('--warmup_weight_decay', type=float, default=0.01,
+                        help='Weight decay for warmup stage')
+    parser.add_argument('--warmup_patience', type=int, default=3,
+                        help='Early stopping patience for warmup (0 to disable)')
+    parser.add_argument('--warmup_min_delta', type=float, default=0.0,
+                        help='Minimum validation loss improvement for warmup')
 
     # Training arguments - Stage 3 (Fine-tuning)
     parser.add_argument('--finetune_epochs', type=int, default=10,
@@ -94,6 +102,8 @@ def parse_args():
                         help='Weight decay for fine-tuning (L2 regularization)')
     parser.add_argument('--finetune_dropout', type=float, default=0.5,
                         help='Dropout rate for projection head during fine-tuning')
+    parser.add_argument('--projection_hidden_dim', type=int, default=512,
+                        help='Hidden dimension for projection head (default: 512, reduces overfitting)')
     parser.add_argument('--finetune_warmup_epochs', type=int, default=2,
                         help='LR warmup epochs for fine-tuning (0 to disable)')
     parser.add_argument('--finetune_patience', type=int, default=5,
@@ -104,6 +114,8 @@ def parse_args():
                         help='Clustering loss weight during fine-tuning (0 to disable)')
     parser.add_argument('--finetune_lambda_activation', type=float, default=0.005,
                         help='Activation loss weight during fine-tuning (0 to disable)')
+    parser.add_argument('--finetune_label_smoothing', type=float, default=0.1,
+                        help='Label smoothing for fine-tuning (0 to disable)')
     parser.add_argument('--unfreeze_text_encoder', action='store_true',
                         help='Unfreeze text encoder during fine-tuning (may hurt zero-shot)')
 
@@ -122,6 +134,17 @@ def parse_args():
                         help='Weight for clustering loss')
     parser.add_argument('--lambda_activation', type=float, default=0.01,
                         help='Weight for activation loss')
+
+    # Data Augmentation arguments
+    parser.add_argument('--augmentation_strength', type=str, default='medium',
+                        choices=['light', 'medium', 'strong', 'strong_v2'],
+                        help='Augmentation strength for training')
+    parser.add_argument('--use_cutmix', action='store_true',
+                        help='Use CutMix augmentation')
+    parser.add_argument('--cutmix_alpha', type=float, default=1.0,
+                        help='CutMix alpha parameter')
+    parser.add_argument('--mixup_prob', type=float, default=0.5,
+                        help='Probability of applying cutmix')
 
     # Optimization arguments
     parser.add_argument('--batch_size', type=int, default=64,
@@ -191,7 +214,8 @@ def create_model(args):
         pooling_mode=args.pooling_mode,
         pretrained_protoclip_path=args.pretrained_protoclip,
         protoclip_sampling_method=args.sampling_method,
-        dropout_rate=args.finetune_dropout
+        dropout_rate=args.finetune_dropout,
+        projection_hidden_dim=args.projection_hidden_dim
     )
 
     # Print model info
@@ -226,11 +250,14 @@ def create_data_loaders(args):
         class_mapping_file=str(class_mapping_file) if class_mapping_file.exists() else None
     )
 
-    # Create data loaders
+    # Create data loaders with augmentation
+    from ProtoPNet.data.transforms import get_train_transforms, get_val_transforms
     train_loader, val_loader = create_imagenet_loaders(
         imagenet_root=args.imagenet_root,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        train_transform=get_train_transforms(augmentation_strength=args.augmentation_strength),
+        val_transform=get_val_transforms(),
         use_subset=args.use_subset,
         subset_samples=args.subset_samples,
         caption_generator=caption_generator
@@ -239,7 +266,7 @@ def create_data_loaders(args):
     return train_loader, val_loader
 
 
-def stage1_warmup(model, train_loader, val_loader, args):
+def stage1_warmup(model, train_loader, val_loader, args, writer=None):
     """
     Stage 1: Warmup Training
 
@@ -257,15 +284,18 @@ def stage1_warmup(model, train_loader, val_loader, args):
     optimizer = AdamW([
         {
             'params': model.image_encoder.backbone.parameters(),
-            'lr': args.warmup_lr_backbone
+            'lr': args.warmup_lr_backbone,
+            'weight_decay': args.warmup_weight_decay
         },
         {
             'params': model.image_encoder.prototype_layer.parameters(),
-            'lr': args.warmup_lr_prototypes
+            'lr': args.warmup_lr_prototypes,
+            'weight_decay': args.warmup_weight_decay
         },
         {
             'params': model.image_encoder.projection_head.parameters(),
-            'lr': args.warmup_lr_prototypes
+            'lr': args.warmup_lr_prototypes,
+            'weight_decay': args.warmup_weight_decay
         }
     ])
 
@@ -292,8 +322,27 @@ def stage1_warmup(model, train_loader, val_loader, args):
         loss_fn=loss_fn,
         device=args.device,
         log_interval=args.log_interval,
-        checkpoint_dir=args.checkpoint_dir
+        checkpoint_dir=args.checkpoint_dir,
+        tensorboard_writer=writer,
+        stage_name='warmup'
     )
+
+    # Create early stopping if enabled
+    early_stopping = None
+    if args.warmup_patience > 0:
+        from ProtoPNet.utils.early_stopping import EarlyStopping
+        early_stopping = EarlyStopping(
+            patience=args.warmup_patience,
+            min_delta=args.warmup_min_delta,
+            verbose=True
+        )
+
+    # Create CutMix augmenter if enabled
+    augmenter = None
+    if args.use_cutmix:
+        from ProtoPNet.data.mixup import CutMix
+        augmenter = CutMix(alpha=args.cutmix_alpha, prob=args.mixup_prob)
+        print(f"✓ CutMix enabled (alpha={args.cutmix_alpha}, prob={args.mixup_prob})")
 
     # Training loop
     best_val_loss = float('inf')
@@ -304,7 +353,7 @@ def stage1_warmup(model, train_loader, val_loader, args):
         print(f"{'=' * 70}")
 
         # Train
-        train_loss, _ = trainer.train_epoch(return_similarities=True)
+        train_loss, _ = trainer.train_epoch(return_similarities=True, augmenter=augmenter)
         print(f"Train loss: {train_loss:.4f}")
 
         # Validate
@@ -313,7 +362,12 @@ def stage1_warmup(model, train_loader, val_loader, args):
 
         # Update learning rate
         scheduler.step()
-        print(f"LR: {scheduler.get_last_lr()[0]:.6f}")
+        current_lr = scheduler.get_last_lr()[0]
+        print(f"LR: {current_lr:.6f}")
+
+        # Log learning rate to TensorBoard
+        if writer is not None:
+            writer.add_scalar('warmup/learning_rate', current_lr, epoch)
 
         # Save checkpoint
         if val_loss < best_val_loss:
@@ -330,6 +384,12 @@ def stage1_warmup(model, train_loader, val_loader, args):
             epoch=epoch,
             stage='warmup'
         )
+
+        # Early stopping check
+        if early_stopping is not None and early_stopping(val_loss, epoch):
+            print(f"\nEarly stopping at epoch {epoch + 1}")
+            print(f"Best validation loss: {best_val_loss:.4f} at epoch {early_stopping.best_epoch + 1}")
+            break
 
     print(f"\n✓ Warmup complete! Best val loss: {best_val_loss:.4f}")
 
@@ -424,7 +484,7 @@ def stage2_projection(model, train_loader, args):
     return model
 
 
-def stage3_finetune(model, train_loader, val_loader, args):
+def stage3_finetune(model, train_loader, val_loader, args, writer=None):
     """
     Stage 3: Fine-tuning
 
@@ -509,7 +569,8 @@ def stage3_finetune(model, train_loader, val_loader, args):
     loss_fn = CombinedLoss(
         lambda_contrastive=1.0,
         lambda_clustering=args.finetune_lambda_clustering,
-        lambda_activation=args.finetune_lambda_activation
+        lambda_activation=args.finetune_lambda_activation,
+        label_smoothing=args.finetune_label_smoothing
     )
 
     # Create trainer
@@ -521,7 +582,9 @@ def stage3_finetune(model, train_loader, val_loader, args):
         loss_fn=loss_fn,
         device=args.device,
         log_interval=args.log_interval,
-        checkpoint_dir=args.checkpoint_dir
+        checkpoint_dir=args.checkpoint_dir,
+        tensorboard_writer=writer,
+        stage_name='finetune'
     )
 
     # Training loop with early stopping
@@ -532,6 +595,13 @@ def stage3_finetune(model, train_loader, val_loader, args):
         verbose=True
     )
 
+    # Create CutMix augmenter if enabled
+    augmenter = None
+    if args.use_cutmix:
+        from ProtoPNet.data.mixup import CutMix
+        augmenter = CutMix(alpha=args.cutmix_alpha, prob=args.mixup_prob)
+        print(f"✓ CutMix enabled (alpha={args.cutmix_alpha}, prob={args.mixup_prob})")
+
     for epoch in range(args.finetune_epochs):
         print(f"\n{'=' * 70}")
         print(f"Fine-tune Epoch {epoch + 1}/{args.finetune_epochs}")
@@ -539,7 +609,7 @@ def stage3_finetune(model, train_loader, val_loader, args):
 
         # Train (compute similarities if auxiliary losses are enabled)
         use_aux_losses = (args.finetune_lambda_clustering > 0 or args.finetune_lambda_activation > 0)
-        train_loss, _ = trainer.train_epoch(return_similarities=use_aux_losses)
+        train_loss, _ = trainer.train_epoch(return_similarities=use_aux_losses, augmenter=augmenter)
         print(f"Train loss: {train_loss:.4f}")
 
         # Validate
@@ -548,7 +618,12 @@ def stage3_finetune(model, train_loader, val_loader, args):
 
         # Update learning rate
         scheduler.step()
-        print(f"LR: {scheduler.get_last_lr()[0]:.6f}")
+        current_lr = scheduler.get_last_lr()[0]
+        print(f"LR: {current_lr:.6f}")
+
+        # Log learning rate to TensorBoard
+        if writer is not None:
+            writer.add_scalar('finetune/learning_rate', current_lr, epoch)
 
         # Save checkpoint if best
         if val_loss < best_val_loss:
@@ -602,6 +677,14 @@ def main():
         print("\n⚠️  CUDA not available, falling back to CPU")
         args.device = 'cpu'
 
+    # Create TensorBoard writer
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_dir = Path(args.checkpoint_dir) / 'tensorboard' / f'run_{timestamp}'
+    writer = SummaryWriter(log_dir=str(log_dir))
+    print(f"\n✓ TensorBoard logging enabled")
+    print(f"  Log directory: {log_dir}")
+    print(f"  To view: tensorboard --logdir {Path(args.checkpoint_dir) / 'tensorboard'}")
+
     # Create model
     model = create_model(args)
 
@@ -618,23 +701,29 @@ def main():
     # Move model to device
     model = model.to(args.device)
 
-    # Stage 1: Warmup
-    if not args.skip_warmup:
-        model = stage1_warmup(model, train_loader, val_loader, args)
-    else:
-        print("\n⏭️  Skipping Stage 1 (Warmup)")
+    try:
+        # Stage 1: Warmup
+        if not args.skip_warmup:
+            model = stage1_warmup(model, train_loader, val_loader, args, writer)
+        else:
+            print("\n⏭️  Skipping Stage 1 (Warmup)")
 
-    # Stage 2: Projection
-    if not args.skip_projection:
-        model = stage2_projection(model, train_loader, args)
-    else:
-        print("\n⏭️  Skipping Stage 2 (Projection)")
+        # Stage 2: Projection
+        if not args.skip_projection:
+            model = stage2_projection(model, train_loader, args)
+        else:
+            print("\n⏭️  Skipping Stage 2 (Projection)")
 
-    # Stage 3: Fine-tuning
-    if not args.skip_finetune:
-        model = stage3_finetune(model, train_loader, val_loader, args)
-    else:
-        print("\n⏭️  Skipping Stage 3 (Fine-tuning)")
+        # Stage 3: Fine-tuning
+        if not args.skip_finetune:
+            model = stage3_finetune(model, train_loader, val_loader, args, writer)
+        else:
+            print("\n⏭️  Skipping Stage 3 (Fine-tuning)")
+
+    finally:
+        # Close TensorBoard writer
+        writer.close()
+        print(f"\n✓ TensorBoard logs saved to: {log_dir}")
 
     # Final summary
     print("\n" + "=" * 70)
@@ -644,6 +733,9 @@ def main():
     print(f"\nFinal model checkpoints:")
     print(f"  - warmup_best.pt")
     print(f"  - finetune_best.pt")
+    print(f"\nTensorBoard logs:")
+    print(f"  - {log_dir}")
+    print(f"  - View with: tensorboard --logdir {Path(args.checkpoint_dir) / 'tensorboard'}")
     print(f"\nNext steps:")
     print(f"  1. Evaluate on retrieval tasks: python scripts/evaluate.py")
     print(f"  2. Visualize prototypes: python scripts/visualize_prototypes.py")

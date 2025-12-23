@@ -31,6 +31,7 @@ class ProtoCLIP(nn.Module):
             Options: 'kmeans', 'random', 'first'
             Proto-CLIP has 16,000 prototypes, this selects num_prototypes from them
         dropout_rate: Dropout probability in projection head (default: 0.5)
+        projection_hidden_dim: Hidden dimension for projection head (default: 512)
 
     Example:
         # Create model with random initialization
@@ -55,7 +56,8 @@ class ProtoCLIP(nn.Module):
         pooling_mode='max',
         pretrained_protoclip_path=None,
         protoclip_sampling_method='kmeans',
-        dropout_rate=0.5
+        dropout_rate=0.5,
+        projection_hidden_dim=512
     ):
         super().__init__()
 
@@ -69,7 +71,8 @@ class ProtoCLIP(nn.Module):
             embedding_dim=embedding_dim,
             pooling_mode=pooling_mode,
             pretrained_backbone=True,
-            dropout_rate=dropout_rate
+            dropout_rate=dropout_rate,
+            projection_hidden_dim=projection_hidden_dim
         )
 
         # Text encoder (CLIP)

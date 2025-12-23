@@ -67,6 +67,27 @@ def get_train_transforms(image_size=224, augmentation_strength='medium'):
             )
         ])
 
+    elif augmentation_strength == 'strong_v2':
+        # Stronger augmentation for overfitting prevention
+        # Includes more aggressive color jitter and random grayscale
+        transform = transforms.Compose([
+            transforms.Resize(256),
+            transforms.RandomCrop(image_size),
+            transforms.RandomHorizontalFlip(),
+            transforms.ColorJitter(
+                brightness=0.3,
+                contrast=0.3,
+                saturation=0.3,
+                hue=0.1
+            ),
+            transforms.RandomGrayscale(p=0.1),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225]
+            )
+        ])
+
     else:
         raise ValueError(f"Unknown augmentation strength: {augmentation_strength}")
 

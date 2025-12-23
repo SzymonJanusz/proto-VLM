@@ -23,6 +23,7 @@ class ProtoPNetEncoder(nn.Module):
         pooling_mode: 'max' or 'attention'
         pretrained_backbone: Whether to use pretrained weights for backbone
         dropout_rate: Dropout probability in projection head (default: 0.5)
+        projection_hidden_dim: Hidden dimension for projection head (default: 512)
     """
 
     def __init__(
@@ -32,7 +33,8 @@ class ProtoPNetEncoder(nn.Module):
         embedding_dim=512,
         pooling_mode='max',
         pretrained_backbone=True,
-        dropout_rate=0.5
+        dropout_rate=0.5,
+        projection_hidden_dim=512
     ):
         super().__init__()
 
@@ -59,12 +61,13 @@ class ProtoPNetEncoder(nn.Module):
 
         # 4. Projection Head (prototypes -> CLIP embedding space)
         # Enhanced with batch normalization and configurable dropout
+        # Reduced capacity to prevent overfitting
         self.projection_head = nn.Sequential(
-            nn.Linear(num_prototypes, 1024),
-            nn.BatchNorm1d(1024),
+            nn.Linear(num_prototypes, projection_hidden_dim),
+            nn.BatchNorm1d(projection_hidden_dim),
             nn.ReLU(),
             nn.Dropout(p=dropout_rate),
-            nn.Linear(1024, embedding_dim),
+            nn.Linear(projection_hidden_dim, embedding_dim),
             nn.BatchNorm1d(embedding_dim)
         )
 

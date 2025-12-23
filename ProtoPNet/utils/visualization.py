@@ -352,15 +352,15 @@ def _generate_html_report(html_path, proto_images, projection_info):
                     <span class="value">{proto_data['proto_idx']}</span>
                 </div>"""
 
-    # Add class name if available
-    if proto_data.get('class_name'):
-        html_content += f"""
+        # Add class name if available
+        if proto_data.get('class_name'):
+            html_content += f"""
                 <div class="info-row">
                     <span class="label">Class:</span>
                     <span class="value" style="font-weight: bold; color: #4CAF50;">{proto_data['class_name']}</span>
                 </div>"""
 
-    html_content += f"""
+        html_content += f"""
                 <div class="info-row">
                     <span class="label">Class ID:</span>
                     <span class="value">{proto_data['class_id']}</span>

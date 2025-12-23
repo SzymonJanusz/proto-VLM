@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
 from pathlib import Path
+from torch.utils.tensorboard import SummaryWriter
 
 
 class ProtoCLIPTrainer:
@@ -40,7 +41,9 @@ class ProtoCLIPTrainer:
         loss_fn,
         device='cuda',
         log_interval=100,
-        checkpoint_dir='./checkpoints'
+        checkpoint_dir='./checkpoints',
+        tensorboard_writer=None,
+        stage_name=None
     ):
         self.model = model.to(device)
         self.train_loader = train_loader
@@ -51,18 +54,22 @@ class ProtoCLIPTrainer:
         self.log_interval = log_interval
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.writer = tensorboard_writer
+        self.stage_name = stage_name if stage_name else ""
 
         self.current_epoch = 0
         self.train_losses = []
         self.val_losses = []
         self.best_val_loss = float('inf')
+        self.global_step = 0
 
-    def train_epoch(self, return_similarities=False):
+    def train_epoch(self, return_similarities=False, augmenter=None):
         """
         Train for one epoch.
 
         Args:
             return_similarities: Whether to compute prototype similarities (needed for aux losses)
+            augmenter: Optional augmentation function (e.g., CutMix) to apply to images
 
         Returns:
             tuple: (average_loss, loss_dict_list)
@@ -75,6 +82,10 @@ class ProtoCLIPTrainer:
 
         for batch_idx, (images, texts) in enumerate(pbar):
             images = images.to(self.device)
+
+            # Apply augmentation if provided (e.g., CutMix)
+            if augmenter is not None:
+                images, _ = augmenter(images)
 
             # Forward pass
             if return_similarities:
@@ -110,15 +121,42 @@ class ProtoCLIPTrainer:
             epoch_losses.append(loss.item())
             epoch_loss_dicts.append(loss_dict)
 
+            # Log to TensorBoard every batch
+            if self.writer is not None:
+                prefix = f"{self.stage_name}/" if self.stage_name else ""
+                self.writer.add_scalar(f'{prefix}train/batch_loss', loss.item(), self.global_step)
+                self.writer.add_scalar(f'{prefix}train/contrastive_loss', loss_dict.get('contrastive', 0), self.global_step)
+                if 'clustering' in loss_dict:
+                    self.writer.add_scalar(f'{prefix}train/clustering_loss', loss_dict['clustering'], self.global_step)
+                if 'activation' in loss_dict:
+                    self.writer.add_scalar(f'{prefix}train/activation_loss', loss_dict['activation'], self.global_step)
+
+            self.global_step += 1
+
             if batch_idx % self.log_interval == 0:
                 pbar.set_postfix({
                     'loss': f"{loss.item():.4f}",
                     'cont': f"{loss_dict.get('contrastive', 0):.4f}"
                 })
 
-        self.current_epoch += 1
         avg_loss = np.mean(epoch_losses)
         self.train_losses.append(avg_loss)
+
+        # Log epoch-level metrics to TensorBoard
+        if self.writer is not None:
+            prefix = f"{self.stage_name}/" if self.stage_name else ""
+            self.writer.add_scalar(f'{prefix}train/epoch_loss', avg_loss, self.current_epoch)
+            # Compute average component losses for the epoch
+            avg_contrastive = np.mean([d.get('contrastive', 0) for d in epoch_loss_dicts])
+            self.writer.add_scalar(f'{prefix}train/epoch_contrastive_loss', avg_contrastive, self.current_epoch)
+            if 'clustering' in epoch_loss_dicts[0]:
+                avg_clustering = np.mean([d['clustering'] for d in epoch_loss_dicts])
+                self.writer.add_scalar(f'{prefix}train/epoch_clustering_loss', avg_clustering, self.current_epoch)
+            if 'activation' in epoch_loss_dicts[0]:
+                avg_activation = np.mean([d['activation'] for d in epoch_loss_dicts])
+                self.writer.add_scalar(f'{prefix}train/epoch_activation_loss', avg_activation, self.current_epoch)
+
+        self.current_epoch += 1
 
         return avg_loss, epoch_loss_dicts
 
@@ -148,6 +186,14 @@ class ProtoCLIPTrainer:
 
         avg_val_loss = np.mean(val_losses)
         self.val_losses.append(avg_val_loss)
+
+        # Log validation metrics to TensorBoard
+        if self.writer is not None:
+            prefix = f"{self.stage_name}/" if self.stage_name else ""
+            self.writer.add_scalar(f'{prefix}val/loss', avg_val_loss, self.current_epoch)
+            # Compute average component losses
+            avg_contrastive = np.mean([d.get('contrastive', 0) for d in val_loss_dicts])
+            self.writer.add_scalar(f'{prefix}val/contrastive_loss', avg_contrastive, self.current_epoch)
 
         return avg_val_loss, val_loss_dicts
 
