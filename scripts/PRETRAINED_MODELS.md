@@ -201,14 +201,6 @@ checkpoint = torch.load(path, map_location='cpu')
 model = model.to('cuda')  # Move model to GPU after loading
 ```
 
-## Next Steps
-
-1. ✅ Download checkpoints using `download_pretrained.py`
-2. ✅ Inspect structure using `inspect_checkpoints.py`
-3. ⏭️ Implement `checkpoint_converter.py` based on inspection results
-4. ⏭️ Test loading checkpoints into model
-5. ⏭️ Train model starting from pretrained weights
-
 ## References
 
 - Proto-CLIP Repository: https://github.com/IRVLUTD/Proto-CLIP
