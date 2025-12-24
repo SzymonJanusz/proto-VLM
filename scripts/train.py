@@ -130,9 +130,9 @@ def parse_args():
     # Loss weights
     parser.add_argument('--lambda_contrastive', type=float, default=1.0,
                         help='Weight for contrastive loss')
-    parser.add_argument('--lambda_clustering', type=float, default=0.01,
+    parser.add_argument('--lambda_clustering', type=float, default=0.1,
                         help='Weight for clustering loss')
-    parser.add_argument('--lambda_activation', type=float, default=0.01,
+    parser.add_argument('--lambda_activation', type=float, default=0.1,
                         help='Weight for activation loss')
 
     # Data Augmentation arguments

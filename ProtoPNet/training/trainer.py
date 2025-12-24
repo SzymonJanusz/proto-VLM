@@ -136,7 +136,9 @@ class ProtoCLIPTrainer:
             if batch_idx % self.log_interval == 0:
                 pbar.set_postfix({
                     'loss': f"{loss.item():.4f}",
-                    'cont': f"{loss_dict.get('contrastive', 0):.4f}"
+                    'cont': f"{loss_dict.get('contrastive', 0):.4f}",
+                    'clust': f"{loss_dict.get('clustering', 0):.4f}",
+                    'act': f"{loss_dict.get('activation', 0):.4f}"
                 })
 
         avg_loss = np.mean(epoch_losses)

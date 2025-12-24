@@ -42,7 +42,9 @@ class ImageNetCaptionGenerator:
         # Load class mapping
         if class_mapping_file and Path(class_mapping_file).exists():
             with open(class_mapping_file, 'r') as f:
-                self.class_names = json.load(f)
+                class_mapping = json.load(f)
+                # Convert string keys to integers
+                self.class_names = {int(k): v for k, v in class_mapping.items()}
         else:
             # Use built-in subset (or download full mapping)
             self.class_names = IMAGENET_CLASSES

@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from .protopnet_encoder import ProtoPNetEncoder
 from .clip_text_encoder import CLIPTextEncoder
-
+import numpy as np
 
 class ProtoCLIP(nn.Module):
     """
@@ -82,7 +82,7 @@ class ProtoCLIP(nn.Module):
         )
 
         # Learnable temperature (can be fixed or learnable)
-        self.logit_scale = nn.Parameter(torch.ones([]) * (1 / temperature))
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / temperature))
 
         # Load Proto-CLIP pretrained weights if provided
         if pretrained_protoclip_path is not None:
