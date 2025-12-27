@@ -20,6 +20,53 @@ import torch
 from torch.utils.data import Dataset
 from .caption_generator import ImageNetCaptionGenerator
 import random
+import json
+
+
+def load_synset_to_idx_mapping(mapping_file='data/imagenet_class_index.json'):
+    """
+    Load synset ID to class index mapping from ImageNet class index file.
+
+    Args:
+        mapping_file: Path to ImageNet class index JSON file
+
+    Returns:
+        tuple: (synset_to_idx dict, synset_to_name dict)
+            - synset_to_idx: {synset_id: class_idx}
+            - synset_to_name: {synset_id: class_name}
+
+    Example:
+        >>> synset_to_idx, synset_to_name = load_synset_to_idx_mapping()
+        >>> synset_to_idx['n02094433']
+        187
+        >>> synset_to_name['n02094433']
+        'Yorkshire_terrier'
+    """
+    mapping_path = Path(mapping_file)
+
+    if not mapping_path.exists():
+        print(f"Warning: Synset mapping file not found at {mapping_file}")
+        return None, None
+
+    try:
+        with open(mapping_path, 'r') as f:
+            data = json.load(f)
+
+        synset_to_idx = {}
+        synset_to_name = {}
+
+        # Parse the Keras format: {class_idx: [synset_id, class_name]}
+        for class_idx_str, (synset_id, class_name) in data.items():
+            class_idx = int(class_idx_str)
+            synset_to_idx[synset_id] = class_idx
+            synset_to_name[synset_id] = class_name
+
+        print(f"Loaded synset mapping for {len(synset_to_idx)} ImageNet classes")
+        return synset_to_idx, synset_to_name
+
+    except Exception as e:
+        print(f"Error loading synset mapping from {mapping_file}: {e}")
+        return None, None
 
 
 class ImageNetWithCaptions(Dataset):
@@ -42,12 +89,16 @@ class ImageNetWithCaptions(Dataset):
         transform=None,
         caption_generator=None,
         use_multiple_captions=False,
-        class_mapping_file=None
+        class_mapping_file=None,
+        synset_mapping_file='data/imagenet_class_index.json'
     ):
         self.root = Path(root)
         self.split = split
         self.transform = transform
         self.use_multiple_captions = use_multiple_captions
+
+        # Load synset to class index mapping
+        self.synset_to_idx, self.synset_to_name = load_synset_to_idx_mapping(synset_mapping_file)
 
         # Setup caption generator
         if caption_generator is None:
@@ -63,10 +114,22 @@ class ImageNetWithCaptions(Dataset):
         self.class_to_idx = self._build_class_to_idx()
 
     def _build_class_to_idx(self):
-        """Build mapping from class folder name to index"""
+        """Build mapping from synset ID (class folder name) to standard ImageNet class index"""
         split_dir = self.root / self.split
-        classes = sorted([d.name for d in split_dir.iterdir() if d.is_dir()])
-        return {cls_name: idx for idx, cls_name in enumerate(classes)}
+
+        if self.synset_to_idx is None:
+            # Fallback to alphabetical ordering if no synset mapping available
+            classes = sorted([d.name for d in split_dir.iterdir() if d.is_dir()])
+            return {cls_name: idx for idx, cls_name in enumerate(classes)}
+        else:
+            # Use standard ImageNet class indices
+            class_to_idx = {}
+            for class_dir in split_dir.iterdir():
+                if class_dir.is_dir():
+                    synset_id = class_dir.name
+                    if synset_id in self.synset_to_idx:
+                        class_to_idx[synset_id] = self.synset_to_idx[synset_id]
+            return class_to_idx
 
     def _load_samples(self):
         """
@@ -81,29 +144,41 @@ class ImageNetWithCaptions(Dataset):
             raise ValueError(f"Split directory not found: {split_dir}")
 
         samples = []
+        skipped_synsets = set()
+        synset_counts = {}
 
         # Iterate through class directories
         for class_dir in sorted(split_dir.iterdir()):
             if not class_dir.is_dir():
                 continue
 
-            class_name = class_dir.name
+            synset_id = class_dir.name  # e.g., 'n02094433'
+
+            # Map synset to class index using standard ImageNet ordering
+            if self.synset_to_idx is not None and synset_id in self.synset_to_idx:
+                class_idx = self.synset_to_idx[synset_id]
+            else:
+                # Synset not in standard ImageNet 1000 classes
+                skipped_synsets.add(synset_id)
+                continue
 
             # Get all images in this class directory
+            img_count = 0
             for img_path in class_dir.iterdir():
                 if img_path.suffix.lower() in ['.jpeg', '.jpg', '.png']:
-                    # We'll determine class_idx properly after building class_to_idx
-                    samples.append((str(img_path), class_name))
+                    samples.append((str(img_path), class_idx))
+                    img_count += 1
 
-        # Convert class names to indices
-        class_to_idx = {cls_name: idx for idx, cls_name in enumerate(
-            sorted(set(cls_name for _, cls_name in samples))
-        )}
+            synset_counts[synset_id] = img_count
 
-        # Replace class names with indices
-        samples = [(path, class_to_idx[cls_name]) for path, cls_name in samples]
-
-        print(f"Loaded {len(samples)} images from {len(class_to_idx)} classes")
+        # Report statistics
+        print(f"Loaded {len(samples)} images from {len(synset_counts)} classes")
+        if skipped_synsets:
+            print(f"  Skipped {len(skipped_synsets)} synsets not in ImageNet-1K:")
+            for synset in sorted(skipped_synsets)[:5]:  # Show first 5
+                print(f"    - {synset}")
+            if len(skipped_synsets) > 5:
+                print(f"    ... and {len(skipped_synsets) - 5} more")
 
         return samples
 
