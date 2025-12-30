@@ -75,9 +75,11 @@ Input Image (B, 3, 224, 224)
 ┌───────────────────────────────────────────────────────────┐
 │ 4. Projection Head                                        │
 │    - 2-layer MLP with BatchNorm                          │
-│    - Layer 1: (M → 1024) + ReLU + Dropout               │
-│    - Layer 2: (1024 → 512) + BatchNorm                  │
+│    - Layer 1: (M → hidden_dim) + ReLU + Dropout         │
+│    - Layer 2: (hidden_dim → 512) + BatchNorm            │
+│    - Configurable hidden_dim (default: 512)              │
 │    - Configurable dropout rate (default: 0.5)            │
+│    - Reduced capacity to prevent overfitting             │
 │    - Output: (B, 512) embeddings                         │
 └───────────────────────────────────────────────────────────┘
     ↓
@@ -109,6 +111,9 @@ Text Embedding (512-D, normalized)
 2. **Spatial Similarity Maps**: For each prototype, we get a 14×14 map showing where similar patterns appear in the image
 3. **Interpretability Through Projection**: After Stage 2, each prototype corresponds to an actual training image patch
 4. **CLIP Alignment**: Contrastive learning aligns visual prototypes with text descriptions
+5. **Learnable Temperature**: Uses log-space initialization (`log(1/0.07)`) for better gradient flow
+6. **Reduced Projection Head**: Configurable hidden dimension (default: 512) to prevent overfitting
+7. **Standard ImageNet Indexing**: Uses synset-to-index mapping for consistent class ordering across datasets
 
 ## Training Process
 
@@ -136,8 +141,10 @@ prototypes               to training patches     head only
 
 **Losses**:
 - **Contrastive Loss** (λ=1.0): Align image-text pairs
-- **Clustering Loss** (λ=0.01): Encourage prototypes to be diverse
-- **Activation Loss** (λ=0.01): Encourage sparse prototype activation
+- **Clustering Loss** (λ=0.1): Encourage prototypes to be diverse
+- **Activation Loss** (λ=0.1): Encourage sparse prototype activation
+
+**Note**: The clustering and activation loss weights were increased from 0.01 to 0.1 in recent updates for better prototype diversity.
 
 **Learning Rates**:
 - Backbone: 5e-5 (pretrained init) or 1e-4 (random init)
@@ -213,8 +220,11 @@ Each prototype visualization shows:
 - Target LR: 1e-5
 
 **Losses**:
-- Contrastive Loss (primary)
-- Optional auxiliary losses (reduced weights)
+- **Contrastive Loss** (primary, with optional label smoothing λ=0.1)
+- **Clustering Loss** (λ=0.005, optional): Maintain prototype diversity
+- **Activation Loss** (λ=0.005, optional): Maintain sparse activation
+
+**Label Smoothing**: Prevents overconfident predictions by using soft targets (0.9 for positive pairs, 0.1/(B-1) for negatives). This improves generalization and reduces overfitting.
 
 **Early Stopping**:
 - Monitors validation loss
@@ -265,6 +275,8 @@ python scripts/quick_start.py
 #   - Download pretrained Proto-CLIP checkpoints
 #   - Run a quick training test
 ```
+
+**What's New**: The codebase now includes label smoothing, stronger augmentation options, TensorBoard logging, and improved class mapping for better training stability and evaluation accuracy.
 
 ## Installation
 
@@ -438,6 +450,30 @@ python scripts/train.py \
     --gradient_accumulation 2
 ```
 
+**With CutMix augmentation** (improved regularization):
+```bash
+python scripts/train.py \
+    --imagenet_root ./imagenet_tiny \
+    --pretrained_protoclip ./pretrained_checkpoints/proto_clip_imagenet \
+    --use_cutmix \
+    --cutmix_alpha 1.0 \
+    --mixup_prob 0.5
+```
+
+**With all regularization features** (best for preventing overfitting):
+```bash
+python scripts/train.py \
+    --imagenet_root ./imagenet_tiny \
+    --pretrained_protoclip ./pretrained_checkpoints/proto_clip_imagenet \
+    --augmentation_strength strong_v2 \
+    --use_cutmix \
+    --finetune_label_smoothing 0.1 \
+    --finetune_dropout 0.5 \
+    --projection_hidden_dim 512 \
+    --finetune_lambda_clustering 0.005 \
+    --finetune_lambda_activation 0.005
+```
+
 ### Training Arguments
 
 #### Core Arguments
@@ -459,9 +495,12 @@ python scripts/train.py \
 | `--warmup_epochs` | 10 | Number of warmup epochs |
 | `--warmup_lr_backbone` | Auto | LR for backbone (1e-4 random, 5e-5 pretrained) |
 | `--warmup_lr_prototypes` | Auto | LR for prototypes (1e-3 random, 5e-4 pretrained) |
+| `--warmup_weight_decay` | 0.01 | Weight decay for warmup stage |
+| `--warmup_patience` | 3 | Early stopping patience (0 to disable) |
+| `--warmup_min_delta` | 0.0 | Minimum validation loss improvement |
 | `--lambda_contrastive` | 1.0 | Weight for contrastive loss |
-| `--lambda_clustering` | 0.01 | Weight for clustering loss |
-| `--lambda_activation` | 0.01 | Weight for activation loss |
+| `--lambda_clustering` | 0.1 | Weight for clustering loss (increased from 0.01) |
+| `--lambda_activation` | 0.1 | Weight for activation loss (increased from 0.01) |
 
 #### Stage 2 (Projection) Arguments
 
@@ -480,10 +519,31 @@ python scripts/train.py \
 | `--finetune_lr` | 1e-5 | Learning rate |
 | `--finetune_weight_decay` | 0.01 | L2 regularization strength |
 | `--finetune_dropout` | 0.5 | Dropout rate in projection head |
-| `--finetune_warmup_epochs` | 2 | LR warmup epochs |
+| `--projection_hidden_dim` | 512 | Hidden dimension for projection head (reduces overfitting) |
+| `--finetune_warmup_epochs` | 2 | LR warmup epochs (0 to disable) |
 | `--finetune_patience` | 5 | Early stopping patience |
 | `--finetune_min_delta` | 0.0 | Min improvement to reset patience |
-| `--unfreeze_text_encoder` | False | Unfreeze CLIP text encoder |
+| `--finetune_lambda_clustering` | 0.005 | Clustering loss weight (0 to disable) |
+| `--finetune_lambda_activation` | 0.005 | Activation loss weight (0 to disable) |
+| `--finetune_label_smoothing` | 0.1 | Label smoothing factor (0 to disable) |
+| `--unfreeze_text_encoder` | False | Unfreeze CLIP text encoder (may hurt zero-shot) |
+
+#### Data Augmentation Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--augmentation_strength` | medium | Augmentation level: 'light', 'medium', 'strong', 'strong_v2' |
+| `--use_cutmix` | False | Enable CutMix augmentation |
+| `--cutmix_alpha` | 1.0 | CutMix alpha parameter (mixing strength) |
+| `--mixup_prob` | 0.5 | Probability of applying CutMix |
+
+**Augmentation Strengths**:
+- `light`: Minimal augmentation (resize + random crop + flip)
+- `medium`: Standard augmentation (+ color jitter with brightness/contrast/saturation=0.2)
+- `strong`: Aggressive augmentation (color jitter with 0.3 and AutoAugment)
+- `strong_v2`: Very aggressive (color jitter 0.3 + random grayscale 10%)
+
+**CutMix** creates virtual training examples by cutting and pasting patches between images. Unlike Mixup which blends entire images, CutMix preserves local structure, making it more suitable for prototype-based models.
 
 #### Other Arguments
 
@@ -542,10 +602,43 @@ After training, you'll find these files in `./checkpoints/`:
 - `finetune_best.pt` - Best fine-tuned model
 - `finetune_latest.pt` - Latest fine-tuned checkpoint
 
+## TensorBoard Logging
+
+The training script automatically logs metrics to TensorBoard for visualization and monitoring.
+
+### Viewing Logs
+
+```bash
+# Start TensorBoard server
+tensorboard --logdir=./runs
+
+# Open browser to http://localhost:6006
+```
+
+### Logged Metrics
+
+**Training Metrics** (per batch and per epoch):
+- Total loss
+- Contrastive loss
+- Clustering loss (if enabled)
+- Activation loss (if enabled)
+
+**Validation Metrics** (per epoch):
+- Validation loss
+- Validation contrastive loss
+
+**Per-Stage Tracking**:
+- Metrics are separated by stage (warmup/, finetune/)
+- Allows easy comparison between training stages
+
+See [TENSORBOARD_GUIDE.md](../TENSORBOARD_GUIDE.md) for detailed visualization guide.
+
 ## Project Structure
 
 ```
 ProtoPNet/
+├── configs/
+│   └── base_config.yaml            # Base configuration template
 ├── models/
 │   ├── resnet_features.py          # ResNet backbone feature extractor
 │   ├── prototype_layer.py          # Prototype similarity computation
@@ -555,18 +648,42 @@ ProtoPNet/
 ├── training/
 │   ├── losses.py                   # Contrastive + auxiliary losses
 │   ├── trainer.py                  # Training loop orchestration
-│   └── optimizer_config.py         # Learning rate schedules
+│   ├── label_smoothing.py          # Label smoothing for contrastive loss
+│   └── mixup.py                    # CutMix augmentation
 ├── data/
 │   ├── imagenet_dataset.py         # ImageNet dataset with captions
 │   ├── caption_generator.py        # Caption generation for images
 │   └── transforms.py               # Data augmentation pipelines
 └── utils/
     ├── early_stopping.py           # Early stopping handler
-    ├── projection.py               # Prototype projection algorithm ✅
-    ├── visualization.py            # HTML visualization generator ✅
+    ├── projection.py               # Prototype projection algorithm
+    ├── visualization.py            # HTML visualization generator
     ├── download_pretrained.py      # Download Proto-CLIP checkpoints
     └── checkpoint_converter.py     # Convert checkpoint formats
 ```
+
+## Recent Improvements
+
+The codebase has undergone several improvements to enhance training stability and prevent overfitting:
+
+### Architecture Changes
+- **Reduced Projection Head**: Configurable hidden dimension (default: 512, previously fixed at 1024) to reduce model capacity and prevent overfitting
+- **Temperature Initialization**: Changed from linear (`1/0.07`) to log-space (`log(1/0.07)`) for better gradient flow during contrastive learning
+- **Standard ImageNet Indexing**: Uses synset-to-index mapping for consistent class ordering across datasets
+
+### Training Enhancements
+- **Label Smoothing**: Optional label smoothing (default: 0.1) for contrastive loss to prevent overconfident predictions
+- **Stronger Regularization**: Increased auxiliary loss weights (clustering and activation from 0.01 to 0.1 in warmup, 0.005 in fine-tuning)
+- **Advanced Augmentation**: New `strong_v2` augmentation option with random grayscale for better regularization
+- **CutMix Support**: Preserves local structure better than Mixup for prototype learning
+- **TensorBoard Integration**: Comprehensive logging of training metrics for monitoring and debugging
+
+### Evaluation Features
+- **Zero-shot Classification**: Full implementation with top-1 and top-5 accuracy metrics
+- **Prototype Retrieval**: Analyze which text descriptions best match learned prototypes
+- **Visualization Tools**: Generate grid visualizations of prototype matches with bounding boxes
+
+These improvements were introduced in commits `18c08b7`, `3e149e2`, and related updates.
 
 ## Tips & Tricks
 
@@ -668,19 +785,103 @@ pip install scipy>=1.10.0
 python scripts/download_imagenet_classes.py
 ```
 
-## Evaluation (TODO)
+### Issue: Class indices don't match between datasets
+**Solution**: The codebase now uses standard ImageNet synset-to-index mapping (via `data/imagenet_class_index.json`) for consistent class ordering. This ensures:
+- Consistent class indices across train/val splits
+- Compatibility with pretrained models
+- Proper evaluation metrics
+
+If using Tiny-ImageNet or custom datasets, the loader will automatically skip synsets not in ImageNet-1K and report statistics.
+
+## Evaluation
+
+The evaluation script provides comprehensive model assessment including zero-shot classification and prototype-text retrieval.
+
+### Zero-Shot Classification
+
+Evaluate the model's ability to classify images using text prompts:
 
 ```bash
-# Evaluate on image-text retrieval
+# Basic zero-shot evaluation
 python scripts/evaluate.py \
     --checkpoint ./checkpoints/finetune_best.pt \
-    --imagenet_root ./imagenet_tiny
+    --imagenet_root ./imagenet_tiny \
+    --mode zero-shot \
+    --batch_size 128
 
-# Visualize learned prototypes
-python scripts/visualize_prototypes.py \
+# With ensemble prompts (more accurate)
+python scripts/evaluate.py \
     --checkpoint ./checkpoints/finetune_best.pt \
-    --output_dir ./visualizations
+    --imagenet_root ./imagenet_tiny \
+    --mode zero-shot \
+    --use_ensemble
+
+# Quick test on subset
+python scripts/evaluate.py \
+    --checkpoint ./checkpoints/finetune_best.pt \
+    --imagenet_root ./imagenet_tiny \
+    --mode zero-shot \
+    --num_samples 1000
 ```
+
+**Metrics**:
+- Top-1 Accuracy: Percentage of correct first predictions
+- Top-5 Accuracy: Percentage where correct class is in top 5 predictions
+
+### Prototype Image-to-Text Retrieval
+
+Analyze what text descriptions best match learned prototypes:
+
+```bash
+# Evaluate retrieval performance
+python scripts/evaluate.py \
+    --checkpoint ./checkpoints/finetune_best.pt \
+    --imagenet_root ./imagenet_tiny \
+    --mode retrieval \
+    --num_retrieval_samples 1000 \
+    --top_k_retrieval 5
+
+# With visualizations
+python scripts/evaluate.py \
+    --checkpoint ./checkpoints/finetune_best.pt \
+    --imagenet_root ./imagenet_tiny \
+    --mode retrieval \
+    --visualize \
+    --num_prototypes_to_visualize 20
+```
+
+This shows:
+- Top-k text captions that best match each prototype
+- Cosine similarity scores
+- Optional grid visualizations showing prototype matches
+
+### Combined Evaluation
+
+Run both zero-shot and retrieval evaluations:
+
+```bash
+python scripts/evaluate.py \
+    --checkpoint ./checkpoints/finetune_best.pt \
+    --imagenet_root ./imagenet_tiny \
+    --mode both \
+    --visualize
+```
+
+### Evaluation Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--checkpoint` | Required | Path to model checkpoint |
+| `--imagenet_root` | Required | Path to ImageNet directory |
+| `--mode` | both | 'zero-shot', 'retrieval', or 'both' |
+| `--batch_size` | 128 | Batch size for evaluation |
+| `--use_ensemble` | False | Use ensemble prompts (slower but more accurate) |
+| `--num_samples` | None | Limit samples for quick testing |
+| `--num_retrieval_samples` | 1000 | Samples for retrieval evaluation |
+| `--top_k_retrieval` | 5 | Number of top text matches to show |
+| `--visualize` | False | Generate visualization grids |
+| `--num_prototypes_to_visualize` | 20 | Number of prototypes to visualize |
+| `--viz_output_dir` | None | Custom visualization output directory |
 
 ## Citation
 

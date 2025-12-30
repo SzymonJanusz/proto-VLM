@@ -492,12 +492,12 @@ def prototype_image_to_text_retrieval(model, val_loader, caption_generator, args
         try:
             with open(projection_info_path, 'rb') as f:
                 projection_info = pickle.load(f)
-            print(f"✓ Loaded projection info from {projection_info_path}")
+            print(f"[OK] Loaded projection info from {projection_info_path}")
         except Exception as e:
-            print(f"⚠️  Warning: Could not load projection info: {e}")
+            print(f"[WARNING] Could not load projection info: {e}")
             print("   Visualizations will not show original prototype images")
     else:
-        print(f"⚠️  Projection info not found at {projection_info_path}")
+        print(f"[WARNING] Projection info not found at {projection_info_path}")
         print("   Visualizations will not show original prototype images")
         print("   Run Stage 2 (projection) first if you want to see prototype origins")
 
@@ -647,7 +647,7 @@ def prototype_image_to_text_retrieval(model, val_loader, caption_generator, args
             )
             saved_files.append(output_path)
 
-        print(f"\n✓ Saved {len(saved_files)} visualization grids to {viz_dir}")
+        print(f"\n[OK] Saved {len(saved_files)} visualization grids to {viz_dir}")
         print(f"  Example: {saved_files[0].name}")
         if projection_info:
             print(f"  Each grid shows the ORIGINAL prototype image (with red border) + top matches")
