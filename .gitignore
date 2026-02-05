@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+
+# Project specific
+checkpoints/
+results/
+results_*/
+experiments/
+pretrained_checkpoints/
+imagenet*/
+data/imagenet/
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Temporary files
+commands
+*.tmp
+*.log

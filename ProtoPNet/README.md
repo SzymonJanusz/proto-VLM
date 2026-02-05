@@ -4,18 +4,36 @@ An interpretable vision-language model combining ProtoPNet's part-based prototyp
 
 ## Overview
 
-This project implements a hybrid architecture that:
+This project provides three main capabilities for interpretable vision-language modeling:
+
+### 1. ProtoCLIP Training
+A hybrid architecture that:
 - **Replaces CLIP's image encoder** with ProtoPNet's prototype-based encoder
 - **Keeps CLIP's text encoder** for language understanding
 - **Learns interpretable prototypes** grounded in real image patches
 - **Enables zero-shot capabilities** through vision-language alignment
+
+### 2. Prototype-to-Text Generation
+Generate natural language descriptions from learned prototypes:
+- **Maps prototype activations** to CLIP embedding space
+- **Generates captions** using ClipCap decoder
+- **Multiple architectures**: Hierarchical pooling and spatial CNN projectors
+- **Configurable sparsity**: Select top-k most active prototypes
+
+### 3. Zero-Training Prototype Interpretation
+Interpret prototypes using pre-trained CLIP (no additional training):
+- **CLIP-based interpretation**: Compare prototype patches to text vocabulary
+- **Multi-scale analysis**: Test different patch sizes for context
+- **Batch processing**: Interpret all prototypes or specific classes
+- **Visual outputs**: Generate organized visualization reports
 
 **Key Features**:
 - 🔍 **Interpretable**: Each prototype corresponds to an actual training image patch
 - 🚀 **Fast**: Uses pretrained Proto-CLIP initialization
 - 💪 **Powerful**: Maintains CLIP's zero-shot capabilities
 - 🎯 **Flexible**: Works with ImageNet, Tiny-ImageNet, or custom datasets
-- 📊 **Visualizable**: HTML visualizations show which image patches prototypes represent
+- 📊 **Visualizable**: HTML visualizations and natural language descriptions
+- 🎨 **Text Generation**: Convert prototype activations to natural language
 
 ## Architecture
 
@@ -560,6 +578,132 @@ python scripts/train.py \
 
 See `python scripts/train.py --help` for all options.
 
+## Prototype-to-Text Generation
+
+Generate natural language descriptions of images based on prototype activations using ClipCap.
+
+### Overview
+
+The prototype projector system:
+1. Extracts spatial prototype similarities (B, 200, 14, 14) from trained ProtoPNet
+2. Applies sparse top-k selection (e.g., k=5) to focus on most active prototypes
+3. Projects to CLIP embedding space (B, 512) using learned projector
+4. Generates captions via ClipCap decoder
+
+### Architecture Options
+
+**Hierarchical Pooling Projector** (Recommended for sparse data):
+- Computes max, mean, std statistics over spatial dimensions
+- Projects concatenated features (600-dim) to CLIP space (512-dim)
+- Works well with sparse activations (k=1 to k=20)
+- Lower parameter count and more stable training
+
+**Spatial CNN Projector**:
+- Convolutional layers that respect spatial structure
+- Better with less sparse data (k=10+)
+- Preserves spatial relationships between prototypes
+- Higher capacity for complex patterns
+
+### Training a Prototype Projector
+
+Basic training:
+```bash
+python scripts/train_prototype_projector.py \
+    --backbone_checkpoint checkpoints/finetune_best.pt \
+    --data_root imagenet_tiny \
+    --output_dir checkpoints/prototype_projector \
+    --projector_type hierarchical \
+    --top_k 5 \
+    --epochs 100 \
+    --batch_size 128
+```
+
+Compare different configurations:
+```bash
+python scripts/compare_prototype_projectors.py \
+    --backbone_checkpoint checkpoints/finetune_best.pt \
+    --data_root imagenet_tiny \
+    --output_dir experiments/comparison \
+    --projector_types spatial_cnn hierarchical \
+    --k_values 1 5 10 20 \
+    --epochs 25
+```
+
+### Key Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--projector_type` | spatial_cnn | Architecture: 'spatial_cnn', 'hierarchical', 'attention' |
+| `--top_k` | 1 | Number of top prototypes to select (1, 5, 10, 20) |
+| `--epochs` | 50 | Training epochs |
+| `--lr` | 1e-4 | Learning rate |
+| `--hidden_dim` | 1024 | Hidden dimension for hierarchical projector |
+| `--evaluate_captions` | False | Evaluate with ClipCap during training |
+
+**Recommended Configuration**:
+- Architecture: `hierarchical` (better for sparse data)
+- Top-k: `5` or `10` (good balance of sparsity and information)
+- Epochs: `100` (for final training, 25 for quick comparison)
+
+**See [docs/GUIDE.md](docs/GUIDE.md) for complete usage guide, performance expectations, and troubleshooting.**
+
+## Zero-Training Prototype Interpretation
+
+Interpret what visual concepts prototypes represent using pre-trained CLIP (no additional training required).
+
+### How It Works
+
+1. Extract prototype patch from the original training image
+2. Create synthetic image (patch on noise background)
+3. Encode with CLIP image encoder
+4. Compare to text embeddings from vocabulary
+5. Return top-k nearest descriptions
+
+### Usage
+
+Interpret all prototypes:
+```bash
+python scripts/interpret_prototypes.py \
+    --checkpoint checkpoints/finetune_best.pt \
+    --data_root imagenet_tiny \
+    --output_dir results/interpretation \
+    --patch_sizes 32 64 128 \
+    --top_k 5
+```
+
+Class-organized interpretation:
+```bash
+python scripts/interpret_by_class.py \
+    --checkpoint checkpoints/finetune_best.pt \
+    --data_root imagenet_tiny \
+    --output_dir results/class_interpretation \
+    --class_id 45  # Interpret prototypes for class 45
+```
+
+### Output Files
+
+- `prototype_interpretations.json` - Top-k text descriptions for each prototype
+- `prototype_images/` - Visualizations of prototype patches
+- `class_X_prototypes.html` - HTML report for specific class (class-organized mode)
+- `interpretation_summary.txt` - Human-readable summary
+
+### Key Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--patch_sizes` | [32, 64, 128] | Patch sizes to try for context |
+| `--top_k` | 5 | Number of text descriptions to return |
+| `--vocabulary` | imagenet | Vocabulary: 'imagenet', 'coco', or custom |
+| `--class_id` | None | Specific class to interpret (class mode only) |
+
+**Benefits**:
+- No training required - uses pre-trained CLIP
+- Fast interpretation (seconds per prototype)
+- Multiple patch sizes capture different context levels
+- Complements ClipCap-based generation
+
+**See [docs/GUIDE.md](docs/GUIDE.md) for complete usage guide and best practices.**
+
 ## Pretrained Models
 
 ### Downloading Pretrained Proto-CLIP
@@ -631,7 +775,7 @@ tensorboard --logdir=./runs
 - Metrics are separated by stage (warmup/, finetune/)
 - Allows easy comparison between training stages
 
-See [TENSORBOARD_GUIDE.md](../TENSORBOARD_GUIDE.md) for detailed visualization guide.
+See [docs/GUIDE.md](docs/GUIDE.md) for detailed TensorBoard visualization guide and monitoring best practices.
 
 ## Project Structure
 
@@ -644,46 +788,82 @@ ProtoPNet/
 │   ├── prototype_layer.py          # Prototype similarity computation
 │   ├── protopnet_encoder.py        # Complete ProtoPNet image encoder
 │   ├── clip_text_encoder.py        # CLIP text encoder wrapper
-│   └── hybrid_model.py             # ProtoCLIP combined model
+│   ├── hybrid_model.py             # ProtoCLIP combined model
+│   ├── prototype_projector.py      # NEW: Prototype-to-CLIP projectors
+│   └── cnn_feature_projector.py    # NEW: CNN feature projectors
 ├── training/
 │   ├── losses.py                   # Contrastive + auxiliary losses
 │   ├── trainer.py                  # Training loop orchestration
 │   ├── label_smoothing.py          # Label smoothing for contrastive loss
-│   └── mixup.py                    # CutMix augmentation
+│   ├── mixup.py                    # CutMix augmentation
+│   └── protopnet_training.py       # 3-stage training logic
 ├── data/
 │   ├── imagenet_dataset.py         # ImageNet dataset with captions
 │   ├── caption_generator.py        # Caption generation for images
 │   └── transforms.py               # Data augmentation pipelines
-└── utils/
-    ├── early_stopping.py           # Early stopping handler
-    ├── projection.py               # Prototype projection algorithm
-    ├── visualization.py            # HTML visualization generator
-    ├── download_pretrained.py      # Download Proto-CLIP checkpoints
-    └── checkpoint_converter.py     # Convert checkpoint formats
+├── utils/
+│   ├── early_stopping.py           # Early stopping handler
+│   ├── projection.py               # Prototype projection algorithm
+│   ├── visualization.py            # HTML visualization generator
+│   ├── prototype_interpretation.py # NEW: CLIP-based interpretation
+│   ├── clip_vocabulary.py          # NEW: Vocabulary for CLIP
+│   ├── vlm_interpretation.py       # NEW: VLM interpretation (BLIP, GIT)
+│   ├── prototype_selection.py      # NEW: Sparse top-k selection
+│   ├── class_interpretation.py     # NEW: Class-level interpretation
+│   ├── text_decoders.py            # NEW: ClipCap decoder integration
+│   ├── download_pretrained.py      # Download Proto-CLIP checkpoints
+│   └── checkpoint_converter.py     # Convert checkpoint formats
+└── docs/
+    └── GUIDE.md                    # Comprehensive usage guide
+
+scripts/
+├── train.py                        # Train ProtoCLIP model (3-stage)
+├── train_prototype_projector.py    # NEW: Train prototype projectors
+├── compare_prototype_projectors.py # NEW: Compare projector configs
+├── interpret_prototypes.py         # NEW: Batch prototype interpretation
+├── interpret_by_class.py           # NEW: Class-organized interpretation
+├── download_clipcap_weights.py     # NEW: Download ClipCap weights
+├── evaluate.py                     # Evaluate trained models
+└── download_tiny_imagenet.py       # Download Tiny-ImageNet dataset
 ```
 
 ## Recent Improvements
 
-The codebase has undergone several improvements to enhance training stability and prevent overfitting:
+The codebase has undergone several improvements to enhance training stability, interpretability, and text generation capabilities.
 
-### Architecture Changes
-- **Reduced Projection Head**: Configurable hidden dimension (default: 512, previously fixed at 1024) to reduce model capacity and prevent overfitting
-- **Temperature Initialization**: Changed from linear (`1/0.07`) to log-space (`log(1/0.07)`) for better gradient flow during contrastive learning
-- **Standard ImageNet Indexing**: Uses synset-to-index mapping for consistent class ordering across datasets
+### Prototype-to-Text Generation (2024)
+- **Multiple Projector Architectures**: Implemented Spatial CNN and Hierarchical Pooling projectors for mapping prototype activations to CLIP embeddings
+- **Sparse Top-k Selection**: Configurable k values (1, 5, 10, 20) to focus on most relevant prototypes
+- **ClipCap Integration**: Natural language caption generation from prototype-based CLIP embeddings
+- **Comparison Framework**: Systematic evaluation tool (`compare_prototype_projectors.py`) for architecture selection
+- **Text Encoder Fix**: Critical bug fix ensuring Hugging Face CLIP text encoder consistency (10-20x performance improvement)
+- **Training Optimizations**: Configurable hidden dimensions, learning rates, and evaluation metrics for stable training
 
-### Training Enhancements
-- **Label Smoothing**: Optional label smoothing (default: 0.1) for contrastive loss to prevent overconfident predictions
-- **Stronger Regularization**: Increased auxiliary loss weights (clustering and activation from 0.01 to 0.1 in warmup, 0.005 in fine-tuning)
-- **Advanced Augmentation**: New `strong_v2` augmentation option with random grayscale for better regularization
-- **CutMix Support**: Preserves local structure better than Mixup for prototype learning
-- **TensorBoard Integration**: Comprehensive logging of training metrics for monitoring and debugging
+### CLIP-Based Interpretation Tools (2024)
+- **Zero-Training Interpretation**: Use pre-trained CLIP to interpret prototypes without additional training
+- **Multi-Scale Analysis**: Support for multiple patch sizes (32, 64, 128) to capture different context levels
+- **Class-Organized Interpretation**: Dedicated tools (`interpret_by_class.py`) for class-level prototype analysis
+- **Batch Processing**: Efficient interpretation of all prototypes with organized output structure
+- **Clean Visualizations**: Separate image and text visualization outputs for better analysis
+- **Optional VLM Enrichment**: Integration with BLIP and GIT models for richer descriptions
 
-### Evaluation Features
-- **Zero-shot Classification**: Full implementation with top-1 and top-5 accuracy metrics
-- **Prototype Retrieval**: Analyze which text descriptions best match learned prototypes
-- **Visualization Tools**: Generate grid visualizations of prototype matches with bounding boxes
+### ProtoCLIP Training Improvements (Previous)
+- **Architecture Changes**:
+  - Reduced projection head (configurable hidden dimension, default: 512)
+  - Log-space temperature initialization for better gradient flow
+  - Standard ImageNet synset-to-index mapping for consistent class ordering
+- **Training Enhancements**:
+  - Label smoothing (default: 0.1) to prevent overconfident predictions
+  - Stronger regularization (increased auxiliary loss weights)
+  - Advanced augmentation (`strong_v2` with random grayscale)
+  - CutMix support for better prototype learning
+  - TensorBoard integration for real-time monitoring
+- **Evaluation Features**:
+  - Zero-shot classification with top-1 and top-5 accuracy
+  - Prototype retrieval analysis
+  - Grid visualization tools
 
-These improvements were introduced in commits `18c08b7`, `3e149e2`, and related updates.
+These improvements were introduced across multiple commits, with major features added in 2024 and training improvements from commits `18c08b7`, `3e149e2`, and related updates.
 
 ## Tips & Tricks
 
@@ -882,6 +1062,25 @@ python scripts/evaluate.py \
 | `--visualize` | False | Generate visualization grids |
 | `--num_prototypes_to_visualize` | 20 | Number of prototypes to visualize |
 | `--viz_output_dir` | None | Custom visualization output directory |
+
+## Documentation
+
+Comprehensive documentation is available in the following locations:
+
+- **[README.md](README.md)** (this file) - Main project overview, installation, and quick start guide
+- **[docs/GUIDE.md](docs/GUIDE.md)** - Comprehensive usage guide covering:
+  - **Prototype-to-Text Generation**: Detailed guide for training projectors, architecture comparison, performance expectations, and troubleshooting
+  - **CLIP-Based Interpretation**: Zero-training prototype interpretation, batch processing, multi-scale analysis
+  - **ClipCap Integration**: Setup instructions, usage examples, and known issues
+  - **TensorBoard Monitoring**: Key metrics, visualization best practices, and training diagnostics
+  - **Best Practices**: Top-k selection guide, architecture selection flowchart, common issues and solutions
+- **[TECHNICAL_APPROACH.md](TECHNICAL_APPROACH.md)** - Technical details of the interpretation methodology
+
+For specific features:
+- **ProtoCLIP Training**: See "Training Process" section above
+- **Prototype Projectors**: See "Prototype-to-Text Generation" section above, and [docs/GUIDE.md](docs/GUIDE.md) for details
+- **CLIP Interpretation**: See "Zero-Training Prototype Interpretation" section above, and [docs/GUIDE.md](docs/GUIDE.md) for details
+- **Evaluation**: See "Evaluation" section above
 
 ## Citation
 
