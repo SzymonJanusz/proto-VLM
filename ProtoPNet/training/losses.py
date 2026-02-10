@@ -190,3 +190,83 @@ class CombinedLoss(nn.Module):
         loss_dict['total'] = total_loss.item()
 
         return total_loss, loss_dict
+
+
+class SpatialMSELoss(nn.Module):
+    """
+    Spatial MSE Loss for training projections with CLIP spatial features.
+
+    Computes MSE loss between spatial feature maps with per-location L2 normalization.
+    Used to train SpatialMSEProjector to match CLIP ResNet-50 layer3 spatial features.
+
+    Key features:
+    - Per-location normalization: Each spatial position is L2-normalized independently
+    - Preserves spatial structure: Computes loss at all 14×14 locations
+    - Normalized embeddings: Works with unit-norm features (CLIP-style)
+
+    Args:
+        reduction: Reduction method ('mean', 'sum', or 'none')
+        normalize_per_location: If True, apply L2 norm per spatial location (default: True)
+
+    Example:
+        >>> loss_fn = SpatialMSELoss()
+        >>> predicted = torch.randn(32, 1024, 14, 14)  # Projected features
+        >>> target = torch.randn(32, 1024, 14, 14)  # CLIP layer3 features
+        >>> loss = loss_fn(predicted, target)
+        >>> assert loss.shape == ()  # Scalar loss
+    """
+
+    def __init__(self, reduction: str = 'mean', normalize_per_location: bool = True):
+        super().__init__()
+        self.reduction = reduction
+        self.normalize_per_location = normalize_per_location
+
+    def forward(self, predicted_spatial: torch.Tensor, target_spatial: torch.Tensor) -> torch.Tensor:
+        """
+        Compute spatial MSE loss with optional per-location normalization.
+
+        Args:
+            predicted_spatial: (B, C, H, W) - Projected spatial features
+                Expected: (B, 1024, 14, 14) from SpatialMSEProjector
+            target_spatial: (B, C, H, W) - Target CLIP spatial features
+                Expected: (B, 1024, 14, 14) from CLIP ResNet-50 layer3
+
+        Returns:
+            loss: Scalar MSE loss (if reduction='mean' or 'sum')
+                  or (B, H, W) loss per location (if reduction='none')
+
+        Algorithm:
+            1. Reshape spatial features: (B, C, H, W) → (B, C, H*W)
+            2. Normalize per spatial location: L2 norm along channel dimension
+            3. Compute MSE between normalized features
+            4. Aggregate loss (mean/sum)
+        """
+        B, C, H, W = predicted_spatial.shape
+
+        # Verify shapes match
+        assert predicted_spatial.shape == target_spatial.shape, \
+            f"Shape mismatch: predicted {predicted_spatial.shape} vs target {target_spatial.shape}"
+
+        if self.normalize_per_location:
+            # Reshape to (B, C, H*W) for per-location normalization
+            pred_flat = predicted_spatial.view(B, C, H * W)  # (B, C, 196)
+            target_flat = target_spatial.view(B, C, H * W)
+
+            # L2 normalize per spatial location (along channel dimension)
+            # This ensures each location is a unit vector
+            pred_norm = F.normalize(pred_flat, p=2, dim=1)  # (B, C, 196)
+            target_norm = F.normalize(target_flat, p=2, dim=1)
+
+            # Compute MSE
+            mse = F.mse_loss(pred_norm, target_norm, reduction=self.reduction)
+
+        else:
+            # Direct MSE without normalization
+            mse = F.mse_loss(predicted_spatial, target_spatial, reduction=self.reduction)
+
+        return mse
+
+    def __repr__(self):
+        return (f"SpatialMSELoss("
+                f"reduction={self.reduction}, "
+                f"normalize_per_location={self.normalize_per_location})")
