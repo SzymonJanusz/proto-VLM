@@ -11,9 +11,39 @@ Key Features:
 - MSE loss with per-location L2 normalization
 - Configurable top-k sparse prototype selection
 - Targets CLIP spatial features (not global or text embeddings)
+- Supports both pretrained backbone and training from scratch
 
 Usage:
-  # Sparse (top-5 prototypes)
+  # Train from scratch with random initialization
+  python scripts/train_spatial_mse_projector.py \
+    --train_from_scratch \
+    --data_root imagenet_tiny \
+    --output_dir checkpoints/spatial_mse_k1_scratch \
+    --epochs 50 \
+    --batch_size 64 \
+    --top_k 1
+
+  # Train from scratch with pretrained Proto-CLIP initialization (NEW)
+  python scripts/train_spatial_mse_projector.py \
+    --pretrained_protoclip ./pretrained_checkpoints/proto_clip_imagenet \
+    --sampling_method kmeans \
+    --data_root imagenet_tiny \
+    --output_dir checkpoints/spatial_mse_k1_protoclip \
+    --epochs 50 \
+    --batch_size 64 \
+    --top_k 1
+
+  # With local checkpoint from train.py (frozen)
+  python scripts/train_spatial_mse_projector.py \
+    --backbone_checkpoint checkpoints/finetune_best.pt \
+    --data_root imagenet_tiny \
+    --output_dir checkpoints/spatial_mse_k1 \
+    --epochs 50 \
+    --batch_size 64 \
+    --top_k 1 \
+    --freeze_backbone
+
+  # Sparse (top-5 prototypes) with pretrained backbone
   python scripts/train_spatial_mse_projector.py \
     --backbone_checkpoint checkpoints/protopnet/best.pt \
     --data_root imagenet_tiny \
@@ -71,10 +101,21 @@ def parse_args():
     )
 
     # Model & checkpoints
-    parser.add_argument('--backbone_checkpoint', type=str, required=True,
-                        help='Path to trained ProtoPNet checkpoint (frozen)')
+    parser.add_argument('--backbone_checkpoint', type=str, default=None,
+                        help='Path to trained ProtoPNet checkpoint (frozen). If not provided, trains from scratch.')
+    parser.add_argument('--pretrained_protoclip', type=str, default=None,
+                        help='Path to pretrained Proto-CLIP checkpoints (16k prototypes, subsampled to 200)')
+    parser.add_argument('--sampling_method', type=str, default='kmeans',
+                        choices=['kmeans', 'random', 'first'],
+                        help='Prototype sampling method for pretrained Proto-CLIP init')
     parser.add_argument('--output_dir', type=str, required=True,
                         help='Directory to save trained projector checkpoints')
+    parser.add_argument('--train_from_scratch', action='store_true',
+                        help='Train from scratch (random initialization) instead of loading checkpoint')
+    parser.add_argument('--freeze_backbone', action='store_true',
+                        help='Freeze ProtoPNet backbone (only applicable when loading checkpoint)')
+    parser.add_argument('--projection_hidden_dim', type=int, default=1024,
+                        help='Hidden dimension for projection head (only used when training from scratch)')
 
     # Data
     parser.add_argument('--data_root', type=str, required=True,
@@ -119,8 +160,42 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_protopnet_model(checkpoint_path, device):
-    """Load frozen ProtoCLIP model."""
+def create_fresh_protopnet_model(projection_hidden_dim, device, freeze=False,
+                                  pretrained_protoclip_path=None, sampling_method='kmeans'):
+    """Create a ProtoCLIP model with random or pretrained initialization."""
+    if pretrained_protoclip_path:
+        print(f"Creating ProtoCLIP model with pretrained Proto-CLIP initialization...")
+        print(f"  Pretrained path: {pretrained_protoclip_path}")
+        print(f"  Sampling method: {sampling_method}")
+    else:
+        print(f"Creating fresh ProtoCLIP model (random initialization)...")
+    print(f"  projection_hidden_dim: {projection_hidden_dim}")
+
+    model = ProtoCLIP(
+        num_prototypes=200,
+        image_backbone='resnet50',
+        embedding_dim=512,
+        pooling_mode='max',
+        freeze_text_encoder=True,
+        projection_hidden_dim=projection_hidden_dim,
+        pretrained_protoclip_path=pretrained_protoclip_path,
+        protoclip_sampling_method=sampling_method
+    ).to(device)
+
+    if freeze:
+        model.eval()
+        for param in model.parameters():
+            param.requires_grad = False
+        print("  ProtoCLIP created and frozen")
+    else:
+        model.train()
+        print("  ProtoCLIP created (trainable)")
+
+    return model
+
+
+def load_protopnet_model(checkpoint_path, device, freeze=True):
+    """Load ProtoCLIP model from checkpoint."""
     print(f"Loading ProtoCLIP from: {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
@@ -142,37 +217,51 @@ def load_protopnet_model(checkpoint_path, device):
 
     # Load weights
     model.load_state_dict(state_dict)
-    model.eval()
 
-    # Freeze all parameters
-    for param in model.parameters():
-        param.requires_grad = False
+    if freeze:
+        model.eval()
+        # Freeze all parameters
+        for param in model.parameters():
+            param.requires_grad = False
+        print("  ProtoCLIP loaded and frozen")
+    else:
+        model.train()
+        print("  ProtoCLIP loaded (trainable)")
 
-    print("  ProtoCLIP loaded and frozen")
     return model
 
 
-def extract_prototype_similarities(images, protopnet_model, device):
+def extract_prototype_similarities(images, protopnet_model, device, freeze=True):
     """
     Extract spatial prototype similarities from ProtoPNet.
 
     Args:
         images: (B, 3, 224, 224) - ImageNet normalized images
-        protopnet_model: Frozen ProtoPNet model
+        protopnet_model: ProtoPNet model (frozen or trainable)
         device: Device
+        freeze: Whether to extract without gradients
 
     Returns:
         prototype_sims: (B, 200, 14, 14) - Spatial similarity maps
     """
-    with torch.no_grad():
-        # Forward through ProtoPNet to get similarities
-        # ProtoCLIP model structure: has .image_encoder which is ProtoPNetEncoder
+    if freeze:
+        with torch.no_grad():
+            # Forward through ProtoPNet to get similarities
+            # ProtoCLIP model structure: has .image_encoder which is ProtoPNetEncoder
+            if hasattr(protopnet_model, 'image_encoder'):
+                # Get prototype similarities (before projection head)
+                features = protopnet_model.image_encoder.backbone(images)  # (B, 1024, 14, 14)
+                prototype_sims = protopnet_model.image_encoder.prototype_layer(features)  # (B, 200, 14, 14)
+            else:
+                # Direct ProtoPNetEncoder model
+                features = protopnet_model.backbone(images)
+                prototype_sims = protopnet_model.prototype_layer(features)
+    else:
+        # Trainable mode - keep gradients
         if hasattr(protopnet_model, 'image_encoder'):
-            # Get prototype similarities (before projection head)
-            features = protopnet_model.image_encoder.backbone(images)  # (B, 1024, 14, 14)
-            prototype_sims = protopnet_model.image_encoder.prototype_layer(features)  # (B, 200, 14, 14)
+            features = protopnet_model.image_encoder.backbone(images)
+            prototype_sims = protopnet_model.image_encoder.prototype_layer(features)
         else:
-            # Direct ProtoPNetEncoder model
             features = protopnet_model.backbone(images)
             prototype_sims = protopnet_model.prototype_layer(features)
 
@@ -188,12 +277,16 @@ def train_epoch(
         loss_fn,
         top_k,
         num_prototypes,
-        device
+        device,
+        freeze_protopnet=True
 ):
     """Train for one epoch."""
     projector.train()
-    protopnet_model.eval()  # Frozen
-    clip_extractor.eval()  # Frozen
+    if freeze_protopnet:
+        protopnet_model.eval()  # Frozen
+    else:
+        protopnet_model.train()  # Trainable
+    clip_extractor.eval()  # Always frozen
 
     epoch_loss = 0.0
     epoch_cosine_sim = 0.0
@@ -211,8 +304,8 @@ def train_epoch(
         clip_spatial_features = clip_extractor(images)  # (B, 1024, 14, 14)
         clip_spatial_features = clip_spatial_features.float()  # FIX: Ensure float32
 
-        # 2. Extract prototype similarities (frozen)
-        prototype_sims = extract_prototype_similarities(images, protopnet_model, device)  # (B, 200, 14, 14)
+        # 2. Extract prototype similarities
+        prototype_sims = extract_prototype_similarities(images, protopnet_model, device, freeze=freeze_protopnet)  # (B, 200, 14, 14)
         prototype_sims = prototype_sims.float()  # FIX: Ensure float32
 
         # 3. Apply sparse selection (configurable)
@@ -285,11 +378,12 @@ def validate_epoch(
         loss_fn,
         top_k,
         num_prototypes,
-        device
+        device,
+        freeze_protopnet=True
 ):
     """Validate for one epoch."""
     projector.eval()
-    protopnet_model.eval()
+    protopnet_model.eval()  # Always eval mode for validation
     clip_extractor.eval()
 
     epoch_loss = 0.0
@@ -306,7 +400,7 @@ def validate_epoch(
             clip_spatial_features = clip_extractor(images)
             clip_spatial_features = clip_spatial_features.float()  # FIX: Ensure float32
 
-            prototype_sims = extract_prototype_similarities(images, protopnet_model, device)
+            prototype_sims = extract_prototype_similarities(images, protopnet_model, device, freeze=True)  # Always freeze in validation
             prototype_sims = prototype_sims.float()  # FIX: Ensure float32
 
             # Apply sparse selection
@@ -360,10 +454,43 @@ def main():
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
-    # Load frozen ProtoPNet model
-    print(f"\nLoading ProtoPNet from: {args.backbone_checkpoint}")
-    protopnet_model = load_protopnet_model(args.backbone_checkpoint, device)
-    print(f"✓ ProtoPNet loaded and frozen")
+    # Create or load ProtoPNet model
+    print("\n" + "=" * 60)
+    print("MODEL INITIALIZATION")
+    print("=" * 60)
+
+    if args.backbone_checkpoint is not None:
+        # Load from local checkpoint (trained via train.py)
+        print("Mode: Using pretrained backbone from local checkpoint")
+        freeze_mode = args.freeze_backbone
+        protopnet_model = load_protopnet_model(
+            checkpoint_path=args.backbone_checkpoint,
+            device=device,
+            freeze=freeze_mode
+        )
+    elif args.pretrained_protoclip is not None:
+        # Initialize from pretrained Proto-CLIP repository checkpoints
+        print("Mode: Training from scratch with pretrained Proto-CLIP initialization")
+        protopnet_model = create_fresh_protopnet_model(
+            projection_hidden_dim=args.projection_hidden_dim,
+            device=device,
+            freeze=False,  # Keep trainable when training from scratch
+            pretrained_protoclip_path=args.pretrained_protoclip,
+            sampling_method=args.sampling_method
+        )
+        freeze_mode = False
+    else:
+        # Random initialization
+        print("Mode: Training from scratch (random initialization)")
+        protopnet_model = create_fresh_protopnet_model(
+            projection_hidden_dim=args.projection_hidden_dim,
+            device=device,
+            freeze=False  # Keep trainable when training from scratch
+        )
+        freeze_mode = False
+
+    print(f"✓ ProtoPNet initialized (frozen={freeze_mode})")
+    print("=" * 60)
 
     # Create CLIP spatial feature extractor
     print(f"\nInitializing CLIP spatial feature extractor (ResNet-50 layer3)...")
@@ -399,14 +526,49 @@ def main():
     print(f"✓ Loss function: {loss_fn}")
 
     # Optimizer and scheduler
-    optimizer = Adam(
-        projector.parameters(),
-        lr=args.lr,
-        weight_decay=args.weight_decay
-    )
+    print("\n" + "=" * 60)
+    print("OPTIMIZER CONFIGURATION")
+    print("=" * 60)
+
+    if freeze_mode:
+        # Only train the projector
+        optimizer = Adam(
+            projector.parameters(),
+            lr=args.lr,
+            weight_decay=args.weight_decay
+        )
+        print(f"Training: Projector only (ProtoPNet frozen)")
+        print(f"  Projector params: {sum(p.numel() for p in projector.parameters() if p.requires_grad):,}")
+    else:
+        # Train both ProtoPNet and projector
+        optimizer = Adam([
+            {
+                'params': protopnet_model.image_encoder.backbone.parameters(),
+                'lr': args.lr * 0.1  # Lower LR for backbone
+            },
+            {
+                'params': protopnet_model.image_encoder.prototype_layer.parameters(),
+                'lr': args.lr
+            },
+            {
+                'params': protopnet_model.image_encoder.projection_head.parameters(),
+                'lr': args.lr
+            },
+            {
+                'params': projector.parameters(),
+                'lr': args.lr
+            }
+        ], weight_decay=args.weight_decay)
+        print(f"Training: ProtoPNet + Projector (from scratch)")
+        print(f"  Backbone params: {sum(p.numel() for p in protopnet_model.image_encoder.backbone.parameters() if p.requires_grad):,}")
+        print(f"  Prototype params: {sum(p.numel() for p in protopnet_model.image_encoder.prototype_layer.parameters() if p.requires_grad):,}")
+        print(f"  Projection head params: {sum(p.numel() for p in protopnet_model.image_encoder.projection_head.parameters() if p.requires_grad):,}")
+        print(f"  Spatial projector params: {sum(p.numel() for p in projector.parameters() if p.requires_grad):,}")
+
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
     print(f"✓ Optimizer: Adam (lr={args.lr}, weight_decay={args.weight_decay})")
     print(f"✓ Scheduler: CosineAnnealingLR")
+    print("=" * 60)
 
     # Data loaders
     print(f"\nLoading datasets from: {args.data_root}")
@@ -450,23 +612,30 @@ def main():
     val_losses = []
     train_cosines = []
     val_cosines = []
+    learning_rates = []
+    sparsity_means = []
+    num_selected_prototypes = []
 
     for epoch in range(args.epochs):
         print(f"\nEpoch {epoch + 1}/{args.epochs}")
-        print(f"Learning rate: {scheduler.get_last_lr()[0]:.6f}")
+        current_lr = scheduler.get_last_lr()[0]
+        print(f"Learning rate: {current_lr:.6f}")
+        learning_rates.append(current_lr)
 
         # Train
         train_loss, train_cosine, sparsity_stats = train_epoch(
             projector, protopnet_model, clip_extractor,
             train_loader, optimizer, loss_fn,
-            args.top_k, args.num_prototypes, device
+            args.top_k, args.num_prototypes, device,
+            freeze_protopnet=freeze_mode
         )
 
         # Validate
         val_loss, val_cosine = validate_epoch(
             projector, protopnet_model, clip_extractor,
             val_loader, loss_fn,
-            args.top_k, args.num_prototypes, device
+            args.top_k, args.num_prototypes, device,
+            freeze_protopnet=freeze_mode
         )
 
         # Update scheduler
@@ -478,6 +647,11 @@ def main():
         if sparsity_stats:
             print(f"Sparsity: {sparsity_stats['mean_sparsity']:.1%} | "
                   f"Selected: {sparsity_stats['mean_num_selected']:.1f} prototypes")
+            sparsity_means.append(sparsity_stats['mean_sparsity'])
+            num_selected_prototypes.append(sparsity_stats['mean_num_selected'])
+        else:
+            sparsity_means.append(1.0)  # No sparsity when top_k = num_prototypes
+            num_selected_prototypes.append(args.num_prototypes)
 
         train_losses.append(train_loss)
         val_losses.append(val_loss)
@@ -489,41 +663,105 @@ def main():
             best_val_loss = val_loss
             save_path = os.path.join(args.output_dir, 'best.pt')
             projector.save(save_path)
-            print(f"✓ Saved best model (val_loss={val_loss:.4f})")
+
+            # Also save ProtoPNet if training from scratch
+            if not freeze_mode:
+                protopnet_save_path = os.path.join(args.output_dir, 'protopnet_best.pt')
+                torch.save({
+                    'model_state_dict': protopnet_model.state_dict(),
+                    'epoch': epoch,
+                }, protopnet_save_path)
+                print(f"✓ Saved best models (val_loss={val_loss:.4f})")
+            else:
+                print(f"✓ Saved best model (val_loss={val_loss:.4f})")
 
         # Save periodic checkpoint
         if (epoch + 1) % 10 == 0:
             save_path = os.path.join(args.output_dir, f'epoch_{epoch + 1}.pt')
             projector.save(save_path)
+            if not freeze_mode:
+                protopnet_save_path = os.path.join(args.output_dir, f'protopnet_epoch_{epoch + 1}.pt')
+                torch.save({
+                    'model_state_dict': protopnet_model.state_dict(),
+                    'epoch': epoch,
+                }, protopnet_save_path)
 
     # Save final checkpoint
     final_path = os.path.join(args.output_dir, 'final.pt')
     projector.save(final_path)
 
+    if not freeze_mode:
+        protopnet_final_path = os.path.join(args.output_dir, 'protopnet_final.pt')
+        torch.save({
+            'model_state_dict': protopnet_model.state_dict(),
+        }, protopnet_final_path)
+        print(f"✓ Saved final checkpoints (projector + protopnet)")
+
     # Plot training curves
-    plt.figure(figsize=(12, 5))
+    fig = plt.figure(figsize=(16, 10))
 
-    plt.subplot(1, 2, 1)
-    plt.plot(train_losses, label='Train Loss')
-    plt.plot(val_losses, label='Val Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('MSE Loss')
-    plt.title('Training Curves - Spatial MSE Loss')
-    plt.legend()
-    plt.grid(True)
+    # 1. MSE Loss
+    plt.subplot(2, 3, 1)
+    plt.plot(train_losses, label='Train Loss', linewidth=2)
+    plt.plot(val_losses, label='Val Loss', linewidth=2)
+    plt.xlabel('Epoch', fontsize=10)
+    plt.ylabel('MSE Loss', fontsize=10)
+    plt.title('Spatial MSE Loss', fontsize=12, fontweight='bold')
+    plt.legend(fontsize=9)
+    plt.grid(True, alpha=0.3)
 
-    plt.subplot(1, 2, 2)
-    plt.plot(train_cosines, label='Train Cosine Sim')
-    plt.plot(val_cosines, label='Val Cosine Sim')
-    plt.xlabel('Epoch')
-    plt.ylabel('Cosine Similarity')
-    plt.title('Training Curves - Cosine Similarity')
-    plt.legend()
-    plt.grid(True)
+    # 2. Cosine Similarity
+    plt.subplot(2, 3, 2)
+    plt.plot(train_cosines, label='Train Cosine', linewidth=2)
+    plt.plot(val_cosines, label='Val Cosine', linewidth=2)
+    plt.xlabel('Epoch', fontsize=10)
+    plt.ylabel('Cosine Similarity', fontsize=10)
+    plt.title('Cosine Similarity (Higher is Better)', fontsize=12, fontweight='bold')
+    plt.legend(fontsize=9)
+    plt.grid(True, alpha=0.3)
 
+    # 3. Learning Rate
+    plt.subplot(2, 3, 3)
+    plt.plot(learning_rates, linewidth=2, color='green')
+    plt.xlabel('Epoch', fontsize=10)
+    plt.ylabel('Learning Rate', fontsize=10)
+    plt.title('Learning Rate Schedule', fontsize=12, fontweight='bold')
+    plt.grid(True, alpha=0.3)
+    plt.yscale('log')
+
+    # 4. Loss comparison (log scale)
+    plt.subplot(2, 3, 4)
+    plt.semilogy(train_losses, label='Train Loss', linewidth=2)
+    plt.semilogy(val_losses, label='Val Loss', linewidth=2)
+    plt.xlabel('Epoch', fontsize=10)
+    plt.ylabel('MSE Loss (log scale)', fontsize=10)
+    plt.title('MSE Loss (Log Scale)', fontsize=12, fontweight='bold')
+    plt.legend(fontsize=9)
+    plt.grid(True, alpha=0.3)
+
+    # 5. Sparsity statistics
+    plt.subplot(2, 3, 5)
+    plt.plot(sparsity_means, linewidth=2, color='purple')
+    plt.xlabel('Epoch', fontsize=10)
+    plt.ylabel('Sparsity Ratio', fontsize=10)
+    plt.title(f'Prototype Sparsity (top_k={args.top_k})', fontsize=12, fontweight='bold')
+    plt.grid(True, alpha=0.3)
+    plt.ylim([0, 1.05])
+
+    # 6. Number of selected prototypes
+    plt.subplot(2, 3, 6)
+    plt.plot(num_selected_prototypes, linewidth=2, color='orange')
+    plt.xlabel('Epoch', fontsize=10)
+    plt.ylabel('Num Selected Prototypes', fontsize=10)
+    plt.title('Active Prototypes per Image', fontsize=12, fontweight='bold')
+    plt.grid(True, alpha=0.3)
+    plt.ylim([0, args.num_prototypes + 5])
+
+    plt.suptitle(f'Spatial MSE Projector Training (top_k={args.top_k}, lr={args.lr})',
+                 fontsize=14, fontweight='bold', y=0.995)
     plt.tight_layout()
-    plt.savefig(os.path.join(args.output_dir, 'training_curves.png'), dpi=150)
-    print(f"\n✓ Saved training curves")
+    plt.savefig(os.path.join(args.output_dir, 'training_curves.png'), dpi=150, bbox_inches='tight')
+    print(f"\n✓ Saved comprehensive training curves with all metrics")
 
     print(f"\n{'=' * 60}")
     print(f"TRAINING COMPLETE")
