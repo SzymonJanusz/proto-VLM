@@ -53,12 +53,14 @@ class CLIPSpatialExtractor(nn.Module):
         self,
         layer: str = 'layer3',
         device: str = 'cuda',
-        normalize_input: bool = True
+        normalize_input: bool = True,
+        extract_final: bool = False
     ):
         super().__init__()
         self.layer_name = layer
         self.device = device
         self.normalize_input = normalize_input
+        self.extract_final = extract_final
 
         # Load CLIP ResNet-50
         print(f"Loading CLIP ResNet-50 model...")
@@ -130,15 +132,18 @@ class CLIPSpatialExtractor(nn.Module):
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
         """
-        Extract spatial features from CLIP ResNet-50.
+        Extract spatial features or final embeddings from CLIP ResNet-50.
 
         Args:
             images: (B, 3, 224, 224) - Images (ImageNet normalized by default)
 
         Returns:
-            spatial_features: (B, C, H, W) - Spatial features
-                - layer3: (B, 1024, 14, 14)
-                - layer4: (B, 2048, 7, 7)
+            If extract_final=True:
+                final_embeddings: (B, 1024) - Final CLIP embeddings for retrieval
+            If extract_final=False:
+                spatial_features: (B, C, H, W) - Spatial features
+                    - layer3: (B, 1024, 14, 14)
+                    - layer4: (B, 2048, 7, 7)
 
         Note:
             - Model is in eval mode (no gradients)
@@ -151,13 +156,16 @@ class CLIPSpatialExtractor(nn.Module):
             if self.normalize_input:
                 images = self.convert_normalization(images)
 
-            # Forward through CLIP ResNet (hook will capture layer3/layer4 output)
-            _ = self.clip_resnet(images)
+            # Forward through CLIP ResNet
+            final_output = self.clip_resnet(images)
 
-            # Get hooked features
-            spatial_features = self.features
-
-        return spatial_features
+            # Return final embeddings or hooked spatial features
+            if self.extract_final:
+                return final_output  # (B, 1024) - final embeddings after attention pooling
+            else:
+                # Get hooked spatial features
+                spatial_features = self.features
+                return spatial_features
 
     def get_feature_dim(self) -> tuple:
         """
@@ -177,7 +185,8 @@ class CLIPSpatialExtractor(nn.Module):
         return (f"CLIPSpatialExtractor("
                 f"layer={self.layer_name}, "
                 f"device={self.device}, "
-                f"normalize_input={self.normalize_input})")
+                f"normalize_input={self.normalize_input}, "
+                f"extract_final={self.extract_final})")
 
 
 def extract_clip_layer3_features(

@@ -53,6 +53,7 @@ from ProtoPNet.models.hybrid_model import ProtoCLIP
 from ProtoPNet.training.trainer import ProtoCLIPTrainer
 from ProtoPNet.training.losses import CombinedLoss
 from ProtoPNet.data.imagenet_dataset import create_imagenet_loaders
+from ProtoPNet.data.caltech101_dataset import create_caltech101_loaders
 from ProtoPNet.data.caption_generator import (
     ImageNetCaptionGenerator,
     download_imagenet_class_mapping
@@ -67,10 +68,15 @@ def parse_args():
     )
 
     # Data arguments
-    parser.add_argument('--imagenet_root', type=str, required=True,
-                        help='Path to ImageNet root directory')
+    parser.add_argument('--dataset', type=str, default='imagenet',
+                        choices=['imagenet', 'caltech101'],
+                        help='Dataset to use for training (default: imagenet)')
+    parser.add_argument('--imagenet_root', type=str, default=None,
+                        help='Path to ImageNet root directory (required for --dataset imagenet)')
+    parser.add_argument('--caltech_root', type=str, default='caltech101',
+                        help='Path to Caltech-101 root directory (for --dataset caltech101)')
     parser.add_argument('--use_subset', action='store_true',
-                        help='Use subset for faster experimentation')
+                        help='Use subset for faster experimentation (ImageNet only)')
     parser.add_argument('--subset_samples', type=int, default=10000,
                         help='Number of samples in subset (if use_subset=True)')
     parser.add_argument('--class_mapping_file', type=str,
@@ -265,10 +271,29 @@ def create_model(args):
 
 
 def create_data_loaders(args):
-    """Create ImageNet train and validation data loaders"""
+    """Create train and validation data loaders for the selected dataset."""
     print("\n" + "=" * 70)
     print("Creating Data Loaders")
     print("=" * 70)
+
+    from ProtoPNet.data.transforms import get_train_transforms, get_val_transforms
+    train_transform = get_train_transforms(augmentation_strength=args.augmentation_strength)
+    val_transform = get_val_transforms()
+
+    if args.dataset == 'caltech101':
+        train_loader, val_loader = create_caltech101_loaders(
+            caltech_root=args.caltech_root,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            train_transform=train_transform,
+            val_transform=val_transform,
+            class_mapping_file='data/caltech101_classes.json',
+        )
+        return train_loader, val_loader
+
+    # --- ImageNet (default) ---
+    if args.imagenet_root is None:
+        raise ValueError("--imagenet_root is required when --dataset imagenet")
 
     # Download class mapping if needed
     class_mapping_file = Path(args.class_mapping_file)
@@ -277,19 +302,16 @@ def create_data_loaders(args):
         print("Downloading ImageNet class names...")
         download_imagenet_class_mapping(str(class_mapping_file))
 
-    # Create caption generator
     caption_generator = ImageNetCaptionGenerator(
         class_mapping_file=str(class_mapping_file) if class_mapping_file.exists() else None
     )
 
-    # Create data loaders with augmentation
-    from ProtoPNet.data.transforms import get_train_transforms, get_val_transforms
     train_loader, val_loader = create_imagenet_loaders(
         imagenet_root=args.imagenet_root,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        train_transform=get_train_transforms(augmentation_strength=args.augmentation_strength),
-        val_transform=get_val_transforms(),
+        train_transform=train_transform,
+        val_transform=val_transform,
         use_subset=args.use_subset,
         subset_samples=args.subset_samples,
         caption_generator=caption_generator

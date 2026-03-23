@@ -300,9 +300,9 @@ def train_epoch(
         images = batch[0].to(device)  # (B, 3, 224, 224)
         batch_size = images.shape[0]
 
-        # 1. Extract CLIP spatial features (frozen, target)
-        clip_spatial_features = clip_extractor(images)  # (B, 1024, 14, 14)
-        clip_spatial_features = clip_spatial_features.float()  # FIX: Ensure float32
+        # 1. Extract CLIP final embeddings (frozen, target)
+        clip_final_embeddings = clip_extractor(images)  # (B, 1024) - final embeddings
+        clip_final_embeddings = clip_final_embeddings.float()  # FIX: Ensure float32
 
         # 2. Extract prototype similarities
         prototype_sims = extract_prototype_similarities(images, protopnet_model, device, freeze=freeze_protopnet)  # (B, 200, 14, 14)
@@ -322,26 +322,33 @@ def train_epoch(
         # 4. Project sparse prototypes (trainable)
         projected_spatial = projector(sparse_sims)  # (B, 1024, 14, 14)
 
-        # 5. Compute spatial MSE loss (per-location normalized)
-        loss = loss_fn(projected_spatial, clip_spatial_features)
+        # 5. Pool projected spatial features to global embeddings
+        projected_global = F.adaptive_avg_pool2d(projected_spatial, (1, 1))  # (B, 1024, 1, 1)
+        projected_global = projected_global.squeeze(-1).squeeze(-1)  # (B, 1024)
 
-        # 6. Backward pass
+        # 6. Compute global embedding loss (MSE + Cosine)
+        # L2 normalize both embeddings
+        projected_norm = F.normalize(projected_global, p=2, dim=1)
+        target_norm = F.normalize(clip_final_embeddings, p=2, dim=1)
+
+        # Combined loss: MSE + Cosine
+        loss_mse = F.mse_loss(projected_norm, target_norm)
+        loss_cosine = 1.0 - F.cosine_similarity(projected_norm, target_norm, dim=1).mean()
+        loss = 0.5 * loss_mse + 0.5 * loss_cosine  # Equal weighting
+
+        # 7. Backward pass
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
         # Compute additional metrics
         with torch.no_grad():
-            # Cosine similarity (flattened)
-            pred_flat = projected_spatial.view(batch_size, 1024, -1)  # (B, 1024, 196)
-            target_flat = clip_spatial_features.view(batch_size, 1024, -1)
+            # Cosine similarity (global embeddings)
+            pred_norm = F.normalize(projected_global, p=2, dim=1)  # (B, 1024)
+            target_norm = F.normalize(clip_final_embeddings, p=2, dim=1)  # (B, 1024)
 
-            # Normalize per location
-            pred_norm = F.normalize(pred_flat, p=2, dim=1)
-            target_norm = F.normalize(target_flat, p=2, dim=1)
-
-            # Cosine similarity per location, then average
-            cosine_sim = (pred_norm * target_norm).sum(dim=1).mean()  # Mean over batch and locations
+            # Cosine similarity averaged over batch
+            cosine_sim = F.cosine_similarity(pred_norm, target_norm, dim=1).mean()
 
         # Update metrics
         epoch_loss += loss.item()
@@ -397,8 +404,8 @@ def validate_epoch(
             batch_size = images.shape[0]
 
             # Extract features
-            clip_spatial_features = clip_extractor(images)
-            clip_spatial_features = clip_spatial_features.float()  # FIX: Ensure float32
+            clip_final_embeddings = clip_extractor(images)  # (B, 1024) - final embeddings
+            clip_final_embeddings = clip_final_embeddings.float()  # FIX: Ensure float32
 
             prototype_sims = extract_prototype_similarities(images, protopnet_model, device, freeze=True)  # Always freeze in validation
             prototype_sims = prototype_sims.float()  # FIX: Ensure float32
@@ -410,17 +417,22 @@ def validate_epoch(
                 sparse_sims = prototype_sims
 
             # Project
-            projected_spatial = projector(sparse_sims)
+            projected_spatial = projector(sparse_sims)  # (B, 1024, 14, 14)
 
-            # Loss
-            loss = loss_fn(projected_spatial, clip_spatial_features)
+            # Pool to global embeddings
+            projected_global = F.adaptive_avg_pool2d(projected_spatial, (1, 1))  # (B, 1024, 1, 1)
+            projected_global = projected_global.squeeze(-1).squeeze(-1)  # (B, 1024)
 
-            # Cosine similarity
-            pred_flat = projected_spatial.view(batch_size, 1024, -1)
-            target_flat = clip_spatial_features.view(batch_size, 1024, -1)
-            pred_norm = F.normalize(pred_flat, p=2, dim=1)
-            target_norm = F.normalize(target_flat, p=2, dim=1)
-            cosine_sim = (pred_norm * target_norm).sum(dim=1).mean()
+            # Compute global embedding loss (MSE + Cosine)
+            projected_norm = F.normalize(projected_global, p=2, dim=1)
+            target_norm = F.normalize(clip_final_embeddings, p=2, dim=1)
+
+            loss_mse = F.mse_loss(projected_norm, target_norm)
+            loss_cosine = 1.0 - F.cosine_similarity(projected_norm, target_norm, dim=1).mean()
+            loss = 0.5 * loss_mse + 0.5 * loss_cosine
+
+            # Cosine similarity metric
+            cosine_sim = F.cosine_similarity(projected_norm, target_norm, dim=1).mean()
 
             epoch_loss += loss.item()
             epoch_cosine_sim += cosine_sim.item()
@@ -489,14 +501,19 @@ def main():
         )
         freeze_mode = False
 
-    print(f"✓ ProtoPNet initialized (frozen={freeze_mode})")
+    print(f"[OK] ProtoPNet initialized (frozen={freeze_mode})")
     print("=" * 60)
 
-    # Create CLIP spatial feature extractor
-    print(f"\nInitializing CLIP spatial feature extractor (ResNet-50 layer3)...")
-    clip_extractor = CLIPSpatialExtractor(layer='layer3', device=device, normalize_input=True)
+    # Create CLIP feature extractor (final embeddings for retrieval)
+    print(f"\nInitializing CLIP final embedding extractor (ResNet-50 -> final)...")
+    clip_extractor = CLIPSpatialExtractor(
+        layer='layer3',
+        device=device,
+        normalize_input=True,
+        extract_final=True  # Extract final embeddings (1024-dim) for retrieval
+    )
     clip_extractor.eval()
-    print(f"✓ CLIP extractor initialized")
+    print(f"[OK] CLIP extractor initialized (extracting final embeddings)")
 
     # Create trainable spatial MSE projector
     print(f"\nCreating SpatialMSEProjector...")
@@ -506,7 +523,7 @@ def main():
         hidden_channels=args.hidden_channels,
         dropout=args.dropout
     ).to(device)
-    print(f"✓ Projector created: {projector}")
+    print(f"[OK] Projector created: {projector}")
     print(f"  Trainable parameters: {sum(p.numel() for p in projector.parameters() if p.requires_grad):,}")
 
     # Sparsity configuration
@@ -523,7 +540,7 @@ def main():
 
     # Create loss function
     loss_fn = SpatialMSELoss(reduction='mean', normalize_per_location=True)
-    print(f"✓ Loss function: {loss_fn}")
+    print(f"[OK] Loss function: {loss_fn}")
 
     # Optimizer and scheduler
     print("\n" + "=" * 60)
@@ -566,8 +583,8 @@ def main():
         print(f"  Spatial projector params: {sum(p.numel() for p in projector.parameters() if p.requires_grad):,}")
 
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
-    print(f"✓ Optimizer: Adam (lr={args.lr}, weight_decay={args.weight_decay})")
-    print(f"✓ Scheduler: CosineAnnealingLR")
+    print(f"[OK] Optimizer: Adam (lr={args.lr}, weight_decay={args.weight_decay})")
+    print(f"[OK] Scheduler: CosineAnnealingLR")
     print("=" * 60)
 
     # Data loaders
@@ -598,9 +615,9 @@ def main():
         pin_memory=True
     )
 
-    print(f"✓ Train dataset: {len(train_dataset)} images")
-    print(f"✓ Val dataset: {len(val_dataset)} images")
-    print(f"✓ Batch size: {args.batch_size}")
+    print(f"[OK] Train dataset: {len(train_dataset)} images")
+    print(f"[OK] Val dataset: {len(val_dataset)} images")
+    print(f"[OK] Batch size: {args.batch_size}")
 
     # Training loop
     print(f"\n{'=' * 60}")
@@ -671,9 +688,9 @@ def main():
                     'model_state_dict': protopnet_model.state_dict(),
                     'epoch': epoch,
                 }, protopnet_save_path)
-                print(f"✓ Saved best models (val_loss={val_loss:.4f})")
+                print(f"[OK] Saved best models (val_loss={val_loss:.4f})")
             else:
-                print(f"✓ Saved best model (val_loss={val_loss:.4f})")
+                print(f"[OK] Saved best model (val_loss={val_loss:.4f})")
 
         # Save periodic checkpoint
         if (epoch + 1) % 10 == 0:
@@ -695,7 +712,7 @@ def main():
         torch.save({
             'model_state_dict': protopnet_model.state_dict(),
         }, protopnet_final_path)
-        print(f"✓ Saved final checkpoints (projector + protopnet)")
+        print(f"[OK] Saved final checkpoints (projector + protopnet)")
 
     # Plot training curves
     fig = plt.figure(figsize=(16, 10))
@@ -761,7 +778,7 @@ def main():
                  fontsize=14, fontweight='bold', y=0.995)
     plt.tight_layout()
     plt.savefig(os.path.join(args.output_dir, 'training_curves.png'), dpi=150, bbox_inches='tight')
-    print(f"\n✓ Saved comprehensive training curves with all metrics")
+    print(f"\n[OK] Saved comprehensive training curves with all metrics")
 
     print(f"\n{'=' * 60}")
     print(f"TRAINING COMPLETE")

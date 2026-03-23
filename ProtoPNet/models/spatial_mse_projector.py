@@ -88,6 +88,7 @@ class SpatialMSEProjector(nn.Module):
             # Layer 3: 1024 → 1024 (refinement)
             nn.Conv2d(output_dim, output_dim, kernel_size=3, padding=1, stride=1),
             nn.BatchNorm2d(output_dim)
+            # No ReLU - allow negative values to prevent clipping to zero with sparse inputs
         )
 
         # Initialize weights

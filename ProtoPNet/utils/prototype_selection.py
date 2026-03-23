@@ -78,18 +78,15 @@ def select_top_k_prototypes(
     top_k_values, top_k_indices = torch.topk(max_activations, k=k, dim=1)  # (B, k), (B, k)
 
     # Step 3: Create binary mask for top-k prototypes
-    # Initialize mask with zeros
-    mask = torch.zeros_like(spatial_similarities)  # (B, M, H, W)
-
-    # Set mask to 1 for top-k prototypes
-    # Expand indices to match spatial dimensions
+    # Use (B, M) mask instead of (B, M, H, W) — 2000x less memory for B=256, M=200, H=W=14
     batch_indices = torch.arange(B, device=spatial_similarities.device)[:, None]  # (B, 1)
+    keep = torch.zeros(B, M, dtype=spatial_similarities.dtype,
+                       device=spatial_similarities.device)  # (B, M) — ~204 KB vs ~401 MB
+    keep[batch_indices, top_k_indices] = 1.0
 
-    # Use advanced indexing to set mask for selected prototypes
-    mask[batch_indices, top_k_indices] = 1.0  # (B, k, H, W) locations set to 1
-
-    # Step 4: Apply mask (element-wise multiplication)
-    sparse_similarities = spatial_similarities * mask  # (B, M, H, W)
+    # Step 4: Apply mask via broadcast — unsqueeze creates a view (no copy),
+    # PyTorch fuses the broadcast into the multiply kernel (no 401 MB intermediate)
+    sparse_similarities = spatial_similarities * keep.unsqueeze(-1).unsqueeze(-1)  # (B, M, 1, 1) → (B, M, H, W)
 
     # Prepare return values based on flags
     returns = [sparse_similarities]
