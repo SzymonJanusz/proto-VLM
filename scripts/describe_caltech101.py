@@ -43,31 +43,48 @@ def load_model(model_path: str):
     processor = AutoProcessor.from_pretrained(model_path)
 
     print(f"Loading model from: {model_path}  (this may take a few minutes)")
+    try:
+        import flash_attn  # noqa: F401
+        attn_impl = "flash_attention_2"
+    except ImportError:
+        attn_impl = "eager"
+    print(f"Using attention implementation: {attn_impl}")
+
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         model_path,
         torch_dtype=torch.bfloat16,
         device_map={"": 0},
+        attn_implementation=attn_impl,
     )
     model.eval()
     print(f"Model on: {next(model.parameters()).device}")
     return processor, model
 
 
-def describe_image(pil_image: Image.Image, prompt: str, processor, model) -> str:
-    """Generate one description for a single image."""
+def describe_images_batch(pil_images: list, prompt: str, processor, model) -> list:
+    """Generate one description per image for a batch of images."""
     from qwen_vl_utils import process_vision_info
 
-    messages = [{"role": "user", "content": [
-        {"type": "image", "image": pil_image},
-        {"type": "text",  "text": prompt},
-    ]}]
+    messages_batch = [
+        [{"role": "user", "content": [
+            {"type": "image", "image": img},
+            {"type": "text",  "text": prompt},
+        ]}]
+        for img in pil_images
+    ]
 
-    text = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-    image_inputs, _ = process_vision_info(messages)
+    texts = [
+        processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+        for msgs in messages_batch
+    ]
+
+    all_image_inputs = []
+    for msgs in messages_batch:
+        imgs, _ = process_vision_info(msgs)
+        all_image_inputs.extend(imgs)
+
     inputs = processor(
-        text=[text], images=image_inputs, padding=True, return_tensors="pt"
+        text=texts, images=all_image_inputs, padding=True, return_tensors="pt"
     ).to(next(model.parameters()).device)
 
     with torch.inference_mode():
@@ -78,8 +95,11 @@ def describe_image(pil_image: Image.Image, prompt: str, processor, model) -> str
             max_new_tokens=256,
         )
 
-    trimmed = output_ids[0][inputs.input_ids.shape[1]:]
-    return processor.decode(trimmed, skip_special_tokens=True).strip()
+    results = []
+    for i in range(len(pil_images)):
+        trimmed = output_ids[i][len(inputs.input_ids[i]):]
+        results.append(processor.decode(trimmed, skip_special_tokens=True).strip())
+    return results
 
 
 def collect_image_paths(caltech_root: Path, splits: list) -> list:
@@ -123,6 +143,8 @@ def main():
                         help="Randomly sample N images instead of processing all")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for --sample (default: 42)")
+    parser.add_argument("--batch_size", type=int, default=8,
+                        help="Number of images to process in parallel (default: 8)")
     args = parser.parse_args()
 
     caltech_root = Path(args.caltech_root)
@@ -162,27 +184,38 @@ def main():
 
     processor, model = load_model(args.model_path)
 
-    for img_path in tqdm(todo, desc="Generating descriptions", unit="img"):
-        try:
-            pil_image = Image.open(img_path).convert("RGB")
-        except Exception as e:
-            print(f"  Skip {img_path}: {e}")
+    for batch_start in tqdm(range(0, len(todo), args.batch_size), desc="Generating descriptions", unit="batch"):
+        batch_paths = todo[batch_start:batch_start + args.batch_size]
+
+        pil_images = []
+        valid_paths = []
+        for img_path in batch_paths:
+            try:
+                pil_images.append(Image.open(img_path).convert("RGB"))
+                valid_paths.append(img_path)
+            except Exception as e:
+                print(f"  Skip {img_path}: {e}")
+
+        if not pil_images:
             continue
 
-        descriptions = []
+        batch_descriptions = [[] for _ in valid_paths]
         for prompt in prompts_to_use:
             try:
-                desc = describe_image(pil_image, prompt, processor, model)
-                descriptions.append(desc)
+                descs = describe_images_batch(pil_images, prompt, processor, model)
+                for i, desc in enumerate(descs):
+                    batch_descriptions[i].append(desc)
             except Exception as e:
-                print(f"  Error on prompt for {img_path.name}: {e}")
+                print(f"  Error on batch prompt: {e}")
                 traceback.print_exc()
-                descriptions.append("")
-                break  # stop after first failure per image to reduce noise
+                for i in range(len(pil_images)):
+                    batch_descriptions[i].append("")
+                break
 
-        results[str(img_path)] = descriptions
+        for img_path, descriptions in zip(valid_paths, batch_descriptions):
+            results[str(img_path)] = descriptions
 
-        # Save after every image (crash-safe)
+        # Save after every batch (crash-safe)
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
 
