@@ -41,6 +41,7 @@ def load_model(model_path: str):
 
     print(f"Loading processor from: {model_path}")
     processor = AutoProcessor.from_pretrained(model_path)
+    processor.tokenizer.padding_side = "left"
 
     print(f"Loading model from: {model_path}  (this may take a few minutes)")
     try:
