@@ -18,15 +18,12 @@
 set -e
 mkdir -p /net/tscratch/people/plgabedychaj/logs
 
-module load Miniconda3
-source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate /net/tscratch/people/plgabedychaj/conda_envs/MCPNet
+SCRATCH=/net/tscratch/people/plgabedychaj
+PYTHON="${SCRATCH}/conda_envs/MCPNet/bin/python"
 
 cd ~/proto-VLM/MCPNet
 
-SCRATCH=/net/tscratch/people/plgabedychaj
-
-python -m torch.distributed.launch --nproc_per_node=1 --master_port 9578 train.py \
+"${PYTHON}" -m torch.distributed.launch --nproc_per_node=1 --master_port 9578 train.py \
   --index CUB200_convnext_small \
   --model convnext \
   --basic_model convnext_small \
