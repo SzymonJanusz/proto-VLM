@@ -11,7 +11,7 @@ PRETRAINED_DIR="${SCRATCH}/pretrained"
 REPO="${HOME}/proto-VLM"
 
 echo "=== Loading conda module ==="
-module load miniconda3 2>/dev/null || module load anaconda3 2>/dev/null || true
+module load Miniconda3
 # shellcheck disable=SC1090
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
