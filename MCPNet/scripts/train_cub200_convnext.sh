@@ -23,6 +23,8 @@ PYTHON="${SCRATCH}/conda_envs/MCPNet/bin/python"
 
 cd ~/proto-VLM/MCPNet
 
+"${PYTHON}" -m pip install wandb -q
+
 "${PYTHON}" -m torch.distributed.launch --nproc_per_node=1 --master_port 9578 train.py \
   --index CUB200_convnext_small \
   --model convnext \
@@ -45,4 +47,6 @@ cd ~/proto-VLM/MCPNet
   --val_batch_size 64 \
   --train_num_workers 8 \
   --val_num_workers 8 \
-  --saved_dir "${SCRATCH}/mcpnet"
+  --saved_dir "${SCRATCH}/mcpnet" \
+  --wandb \
+  --wandb_project MCPNet

@@ -12,6 +12,12 @@ import matplotlib.pyplot as plt
 
 from utils import read_args, info_log, cal_cov_component, cal_concept, cal_acc, cal_class_MCP, cal_cov, load_model, check_device, CCD_loss, CKA_loss
 
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+
 class GatherLayer(torch.autograd.Function):
     """Gather tensors from all process, supporting backward propagation."""
 
@@ -110,6 +116,16 @@ def runs(args):
             print('Index : {}'.format(args.index), file = f)
             print("dataset : {}".format(args.dataset_name), file = f)
         writer = SummaryWriter('./logs/{}/{}_{}'.format(args.index, args.model.lower(), args.basic_model.lower()))
+        if args.wandb:
+            if not WANDB_AVAILABLE:
+                print("WARNING: wandb not installed, skipping W&B logging")
+                args.wandb = False
+            else:
+                wandb.init(
+                    project=args.wandb_project,
+                    name=args.index,
+                    config=vars(args),
+                )
     # -------------------------------------------------------------------------
     
     start_epoch = 1
@@ -270,6 +286,11 @@ def runs(args):
             writer.add_scalar('Loss/train', loss_t.avg, epoch)
             for key in loss_detail_t.keys():
                 writer.add_scalar('{}/train'.format(key), loss_detail_t[key].avg, epoch)
+            if args.wandb:
+                log_dict = {"train/loss": loss_t.avg, "lr": get_lr(optimizer), "epoch": epoch}
+                for key, val in loss_detail_t.items():
+                    log_dict["train/{}".format(key)] = val.avg
+                wandb.log(log_dict)
         
         if epoch == 1:
             for layer_i in range(len(Sum_As)):
@@ -369,6 +390,15 @@ def runs(args):
 
                 writer.add_scalar('Accuracy resp top1/{}'.format(phase), correct_t.avg, epoch)
                 writer.add_scalar('Accuracy resp top5/{}'.format(phase), correct_t5.avg, epoch)
+                if args.wandb:
+                    wlog = {
+                        "{}/top1_acc".format(phase): correct_t.avg,
+                        "{}/top5_acc".format(phase): correct_t5.avg,
+                        "epoch": epoch,
+                    }
+                    if phase == "val":
+                        wlog["val/loss"] = loss_t.avg
+                    wandb.log(wlog)
                 # -------------------------------------------------------------
                 
                 # Save model --------------------------------------------------
@@ -422,6 +452,8 @@ def runs(args):
 
     # Show the best result ----------------------------------------------------
     info_log("Best acc : {:.6f} loss : {:.6f}".format(ACCMeters.avg, LOSSMeters.avg), args.global_rank, args.log_type, args.log)
+    if args.global_rank in [-1, 0] and args.wandb:
+        wandb.finish()
 
 # =============================================================================
 # Templet for recording values

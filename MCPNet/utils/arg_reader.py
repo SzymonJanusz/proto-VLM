@@ -10,6 +10,10 @@ def read_args():
     parser.add_argument("--index", type = str, default = None, required = True, help = "Name of the experiments")
     parser.add_argument("--saved_dir", default = ".", type = str)
     parser.add_argument("--log_type", default = ["std", "log"], type = str, nargs = "+")
+    parser.add_argument("--wandb", default = False, action = "store_true",
+                        help = "Enable Weights & Biases logging")
+    parser.add_argument("--wandb_project", type = str, default = "MCPNet",
+                        help = "W&B project name")
 
     # training hyper parameters
     parser.add_argument("--local_rank", type = int, default = -1, help = "DDP parameter. (Don't modify !!)")
