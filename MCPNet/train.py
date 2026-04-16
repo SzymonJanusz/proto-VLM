@@ -287,7 +287,7 @@ def runs(args):
             for key in loss_detail_t.keys():
                 writer.add_scalar('{}/train'.format(key), loss_detail_t[key].avg, epoch)
             if args.wandb:
-                log_dict = {"train/loss": loss_t.avg, "lr": get_lr(optimizer), "epoch": epoch}
+                log_dict = {"train/loss": loss_t.avg, "lr": get_lr(train_optimizer), "epoch": epoch}
                 for key, val in loss_detail_t.items():
                     log_dict["train/{}".format(key)] = val.avg
                 wandb.log(log_dict)
