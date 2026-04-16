@@ -9,18 +9,23 @@ set -e
 SCRATCH=/net/tscratch/people/plgabedychaj
 PRETRAINED_DIR="${SCRATCH}/pretrained"
 REPO="${HOME}/proto-VLM"
+CONDA_ENV_DIR="${SCRATCH}/conda_envs/MCPNet"
 
 echo "=== Loading conda module ==="
 module load Miniconda3
 # shellcheck disable=SC1090
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
-echo "=== Creating MCPNet conda environment ==="
-conda env create -f "${REPO}/MCPNet/environment.yml"
+# Redirect conda cache and envs to scratch to avoid home quota
+export CONDA_PKGS_DIRS="${SCRATCH}/conda_pkgs"
+mkdir -p "${SCRATCH}/conda_pkgs"
+
+echo "=== Creating MCPNet conda environment in scratch ==="
+conda env create -f "${REPO}/MCPNet/environment.yml" --prefix "${CONDA_ENV_DIR}"
 
 echo ""
 echo "=== Activating environment ==="
-conda activate MCPNet
+conda activate "${CONDA_ENV_DIR}"
 
 echo ""
 echo "=== Downloading pretrained backbone weights ==="
@@ -31,6 +36,8 @@ python scripts/download_pretrained.py --output-dir "${PRETRAINED_DIR}"
 echo ""
 echo "=== Setup complete ==="
 echo "Pretrained weights saved to: ${PRETRAINED_DIR}"
+echo ""
+echo "NOTE: Activate with: conda activate ${CONDA_ENV_DIR}"
 echo ""
 echo "To submit training jobs:"
 echo "  sbatch ${REPO}/MCPNet/scripts/train_awa2_resnet50.sh"

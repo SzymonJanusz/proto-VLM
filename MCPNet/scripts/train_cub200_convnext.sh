@@ -20,7 +20,7 @@ mkdir -p /net/tscratch/people/plgabedychaj/logs
 
 module load Miniconda3
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate MCPNet
+conda activate /net/tscratch/people/plgabedychaj/conda_envs/MCPNet
 
 cd ~/proto-VLM/MCPNet
 
