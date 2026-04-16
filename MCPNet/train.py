@@ -404,7 +404,7 @@ def runs(args):
                                 "Lr_scheduler" : lr_state_dict,
                                 "Best ACC" : max_acc[phase].avg,
                                 "concept_cha" : args.concept_cha}
-                torch.save(save_data, './pkl/{}/{}_{}/last_model.pkl'.format(args.index, args.model.lower(), args.basic_model.lower()))
+                torch.save(save_data, os.path.join(args.dst, 'last_model.pkl'))
                 # -------------------------------------------------------------
                 info_log('Index : {}'.format(args.index), args.global_rank, args.log_type, args.log)
                 info_log("dataset : {}".format(args.dataset_name), args.global_rank, args.log_type, args.log)
