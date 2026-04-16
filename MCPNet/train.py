@@ -472,11 +472,14 @@ if __name__ == '__main__':
         
         print(f"Args : {args}")
         if not args.resume and not first_time:
-            response = input("The experiment already exist ({}/{}_{}). Are you sure you want replace it? (y/n)".format(args.index, args.model.lower(), args.basic_model.lower())).lower()
-            while response != 'y' and response != 'n':
+            if sys.stdin.isatty():
                 response = input("The experiment already exist ({}/{}_{}). Are you sure you want replace it? (y/n)".format(args.index, args.model.lower(), args.basic_model.lower())).lower()
-            if response == 'n':
-                sys.exit()
+                while response != 'y' and response != 'n':
+                    response = input("The experiment already exist ({}/{}_{}). Are you sure you want replace it? (y/n)".format(args.index, args.model.lower(), args.basic_model.lower())).lower()
+                if response == 'n':
+                    sys.exit()
+            else:
+                print("Non-interactive mode: overwriting existing experiment {}/{}_{}".format(args.index, args.model.lower(), args.basic_model.lower()))
 
         with open(args.log, "w") as f:
             print(f"Args : {args}", file = f)
