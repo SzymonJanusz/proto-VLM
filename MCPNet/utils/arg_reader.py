@@ -77,6 +77,10 @@ def read_args():
     elif cfg.basic_model == "inceptionv3":
         cfg.parameter_path = "../pretrained/inception_v3.pth"
 
+    # Allow CLI to override hardcoded parameter path
+    if args.get('parameter_path') is not None:
+        cfg.parameter_path = args['parameter_path']
+
     if cfg.dataset_name == "CUB_200_2011":
         cfg.category = 200
         cfg.train_dataset_path = "/eva_data_4/bor/datasets/CUB_200_2011/train"
