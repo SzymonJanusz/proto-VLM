@@ -12,6 +12,7 @@
 set -e
 mkdir -p /net/tscratch/people/plgabedychaj/logs
 
+module load miniconda3 2>/dev/null || module load anaconda3 2>/dev/null || true
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate MCPNet
 

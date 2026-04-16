@@ -10,13 +10,16 @@ SCRATCH=/net/tscratch/people/plgabedychaj
 PRETRAINED_DIR="${SCRATCH}/pretrained"
 REPO="${HOME}/proto-VLM"
 
+echo "=== Loading conda module ==="
+module load miniconda3 2>/dev/null || module load anaconda3 2>/dev/null || true
+# shellcheck disable=SC1090
+source "$(conda info --base)/etc/profile.d/conda.sh"
+
 echo "=== Creating MCPNet conda environment ==="
 conda env create -f "${REPO}/MCPNet/environment.yml"
 
 echo ""
 echo "=== Activating environment ==="
-# shellcheck disable=SC1090
-source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate MCPNet
 
 echo ""
