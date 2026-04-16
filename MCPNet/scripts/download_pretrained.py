@@ -26,10 +26,7 @@ def download_resnet50(output_dir: Path):
         return
     print('  Downloading ResNet50 pretrained weights...')
     model = tvm.resnet50(weights=tvm.ResNet50_Weights.IMAGENET1K_V1)
-    state = model.state_dict()
-    state.pop('fc.weight')
-    state.pop('fc.bias')
-    torch.save(state, out)
+    torch.save(model.state_dict(), out)
     print(f'  Saved: {out}')
 
 
