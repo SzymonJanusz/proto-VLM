@@ -110,7 +110,7 @@ def runs(args):
     dataset, dataset_sizes, all_image_datasets = dataloader.load_data(args)
     # Infer category count from dataset when not set by dataset_name lookup
     if not hasattr(args, 'category') or args.category is None:
-        args.category = len(all_image_datasets["train"].classes)
+        args.category = len(dataset["train"].dataset.classes)
     # -------------------------------------------------------------------------
     
     # Define tensorboard for recording ----------------------------------------
