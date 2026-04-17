@@ -63,11 +63,8 @@ def build_imagefolder(raw_dir: Path, out_dir: Path, split: str, ann_filename: st
         w, h = ann["bbox"][2], ann["bbox"][3]
         area_by_img_cat[ann["image_id"]][ann["category_id"]] += w * h
 
-    # Create class directories
-    for name in cat_map.values():
-        (split_out / name).mkdir(parents=True, exist_ok=True)
-
     skipped = 0
+    assigned = 0
     for img_id, cat_areas in area_by_img_cat.items():
         best_cat = max(cat_areas, key=cat_areas.get)
         cat_name = cat_map[best_cat]
@@ -77,12 +74,13 @@ def build_imagefolder(raw_dir: Path, out_dir: Path, split: str, ann_filename: st
         if not src.exists():
             skipped += 1
             continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
         if not dst.exists():
             os.symlink(src.resolve(), dst)
+        assigned += 1
 
-    assigned = sum(len(c) for c in area_by_img_cat.values())  # not quite right but indicative
-    total_imgs = len(area_by_img_cat)
-    print(f"  {total_imgs} images assigned, {skipped} skipped (missing source)")
+    n_classes = len(list(split_out.iterdir()))
+    print(f"  {assigned} images assigned across {n_classes} classes, {skipped} skipped (missing source)")
 
 
 def main():
