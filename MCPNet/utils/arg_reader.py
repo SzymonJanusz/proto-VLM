@@ -121,6 +121,8 @@ def read_args():
         cfg.category = 1000
         cfg.train_dataset_path = "/eva_data_4/bor/datasets/ImageNet2012/train"
         cfg.val_dataset_path = "/eva_data_4/bor/datasets/ImageNet2012/val"
+    elif cfg.dataset_name == "COCO":
+        cfg.category = 80
 
     # Allow CLI to override hardcoded dataset paths
     if args.get('train_dataset_path') is not None:
