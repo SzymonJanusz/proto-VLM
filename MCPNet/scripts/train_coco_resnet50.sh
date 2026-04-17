@@ -23,7 +23,7 @@ cd ~/proto-VLM/MCPNet
 
 "${PYTHON}" -m pip install wandb -q
 
-"${PYTHON}" -m torch.distributed.launch --nproc_per_node=1 --master_port 9572 train.py \
+"${PYTHON}" -m torch.distributed.launch --nproc_per_node=1 --master_addr 127.0.0.1 --master_port 9572 train.py \
   --index COCO_resnet50 \
   --model ResNet \
   --basic_model resnet50_relu \

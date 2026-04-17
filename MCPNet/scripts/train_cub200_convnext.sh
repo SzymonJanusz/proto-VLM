@@ -25,7 +25,7 @@ cd ~/proto-VLM/MCPNet
 
 "${PYTHON}" -m pip install wandb -q
 
-"${PYTHON}" -m torch.distributed.launch --nproc_per_node=1 --master_port 9578 train.py \
+"${PYTHON}" -m torch.distributed.launch --nproc_per_node=1 --master_addr 127.0.0.1 --master_port 9578 train.py \
   --index CUB200_convnext_small \
   --model convnext \
   --basic_model convnext_small \
