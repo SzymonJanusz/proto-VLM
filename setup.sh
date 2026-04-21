@@ -9,10 +9,12 @@ WORKDIR=$SCRATCH/ctrl-o
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 
-# Redirect pip cache to scratch to avoid home directory quota issues
+# Redirect caches to scratch to avoid home directory quota issues
+# HF_HUB_CACHE: model/dataset cache (large) → scratch
+# Token stays in default ~/.cache/huggingface/token
 export PIP_CACHE_DIR=$SCRATCH/.cache/pip
-export HF_HOME=$SCRATCH/.cache/huggingface
-mkdir -p "$PIP_CACHE_DIR" "$HF_HOME"
+export HF_HUB_CACHE=$SCRATCH/.cache/huggingface/hub
+mkdir -p "$PIP_CACHE_DIR" "$HF_HUB_CACHE"
 
 echo "==> Loading modules..."
 module load Python/3.10.4
@@ -45,10 +47,10 @@ fi
 source "$WORKDIR/venv/bin/activate"
 pip install --upgrade pip --quiet
 
-# --- PyTorch (CUDA 12.4 build, satisfies ^2.2.0 constraint) ---
-echo "==> Installing PyTorch 2.4.0 + CUDA 12.4..."
-pip install torch==2.4.0 torchvision==0.19.0 \
-    --index-url https://download.pytorch.org/whl/cu124 \
+# --- PyTorch (use 2.2.0 + torchvision 0.17.0 to match ctrl-o's constraints) ---
+echo "==> Installing PyTorch 2.2.0 + CUDA 12.1..."
+pip install torch==2.2.0 torchvision==0.17.0 \
+    --index-url https://download.pytorch.org/whl/cu121 \
     --quiet
 
 # --- CTRL-O core dependencies (from pyproject.toml) ---
@@ -77,9 +79,9 @@ pip install --quiet \
     "pycocotools" \
     "accelerate"
 
-# --- Install CTRL-O as editable package ---
+# --- Install CTRL-O as editable package (--no-deps: torch/torchvision already pinned above) ---
 echo "==> Installing CTRL-O package..."
-pip install -e "$WORKDIR/CTRL-O" --quiet
+pip install -e "$WORKDIR/CTRL-O" --no-deps --quiet
 
 # --- Build REFER C extensions ---
 # Patch refer.py for Python 3 compatibility:
@@ -93,7 +95,16 @@ sed -i \
 echo "==> refer.py patched (skipping broken C extension build)."
 
 # --- Pre-download LLM2Vec model (large, ~16 GB) ---
+# Requires:
+#   1. Access granted to https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
+#   2. HF token set: run `huggingface-cli login` once, or export HUGGING_FACE_HUB_TOKEN=<token>
 echo "==> Pre-downloading LLM2Vec model (this may take a while)..."
+if ! huggingface-cli whoami &>/dev/null; then
+    echo "ERROR: Not logged into HuggingFace."
+    echo "  Run: huggingface-cli login"
+    echo "  Then re-run: bash setup.sh"
+    exit 1
+fi
 python -c "
 from llm2vec import LLM2Vec
 LLM2Vec.from_pretrained(

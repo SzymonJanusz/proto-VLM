@@ -22,6 +22,9 @@ module load Python/3.10.4
 module load CUDA/12.4.0
 module load cuDNN/9.2.1.18-CUDA-12.4.0
 
+export PIP_CACHE_DIR=$SCRATCH/.cache/pip
+export HF_HUB_CACHE=$SCRATCH/.cache/huggingface/hub
+
 source "$WORKDIR/venv/bin/activate"
 
 CHECKPOINT=$WORKDIR/pretrained_models/ctrlo/pretrained_model.ckpt
