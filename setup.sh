@@ -9,6 +9,11 @@ WORKDIR=$SCRATCH/ctrl-o
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 
+# Redirect pip cache to scratch to avoid home directory quota issues
+export PIP_CACHE_DIR=$SCRATCH/.cache/pip
+export HF_HOME=$SCRATCH/.cache/huggingface
+mkdir -p "$PIP_CACHE_DIR" "$HF_HOME"
+
 echo "==> Loading modules..."
 module load Python/3.10.4
 module load CUDA/12.4.0
@@ -68,7 +73,6 @@ pip install --quiet \
     "tensorboardx" \
     "braceexpand" \
     "pyamg" \
-    "moviepy" \
     "omegaconf" \
     "pycocotools" \
     "accelerate"
