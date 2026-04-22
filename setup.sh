@@ -84,15 +84,12 @@ echo "==> Installing CTRL-O package..."
 pip install -e "$WORKDIR/CTRL-O" --no-deps --quiet
 
 # --- Build REFER C extensions ---
-# Patch refer.py for Python 3 compatibility:
-#   - replace cPickle (Python 2) with pickle
-#   - replace broken local C extension with pycocotools.mask (same API)
-echo "==> Patching refer/refer.py for Python 3..."
-sed -i \
-    -e 's/import cPickle as pickle/import pickle/' \
-    -e 's/from external import mask/from pycocotools import mask/' \
-    "$WORKDIR/refer/refer.py"
-echo "==> refer.py patched (skipping broken C extension build)."
+# Convert refer.py from Python 2 to Python 3 (print statements, cPickle, etc.)
+# Then fix the mask import to use pycocotools instead of the broken C extension.
+echo "==> Converting refer/refer.py to Python 3..."
+2to3 -w "$WORKDIR/refer/refer.py" > /dev/null 2>&1
+sed -i 's/from external import mask/from pycocotools import mask/' "$WORKDIR/refer/refer.py"
+echo "==> refer.py converted."
 
 # --- Pre-download LLM2Vec model (large, ~16 GB) ---
 # Requires:
