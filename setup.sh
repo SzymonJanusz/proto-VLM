@@ -77,6 +77,8 @@ pip install --quiet \
     "pyamg" \
     "omegaconf" \
     "pycocotools" \
+    "matplotlib" \
+    "torchtyping" \
     "accelerate"
 
 # --- Install CTRL-O as editable package (--no-deps: torch/torchvision already pinned above) ---

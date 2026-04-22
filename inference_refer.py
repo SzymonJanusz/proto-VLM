@@ -72,7 +72,13 @@ class CtrloModel:
 
     def _load_model(self, checkpoint_path: str, config_path: str):
         from ocl.cli import train as ocl_train
+        from omegaconf import OmegaConf, open_dict
         config = OmegaConf.load(config_path)
+        # Strip metrics that depend on the 'routed' package — not needed for inference
+        with open_dict(config):
+            for key in ("training_metrics", "evaluation_metrics", "losses"):
+                if key in config:
+                    config[key] = {}
         self.model = ocl_train.build_model_from_config(config, checkpoint_path)
         self.model = self.model.to(self.device)
         self.model.eval()
