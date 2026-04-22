@@ -36,8 +36,8 @@ OUTPUT_DIR=$WORKDIR/results_refer
 
 mkdir -p "$OUTPUT_DIR"
 
-# Use inference script from the repo clone
-SCRIPT=/net/people/plgrid/plgabedychaj/PycharmProjects/proto-VLM/inference_refer.py
+# Use inference script from the directory where sbatch was submitted
+SCRIPT=$SLURM_SUBMIT_DIR/inference_refer.py
 
 # --- RefCOCO ---
 echo ""
