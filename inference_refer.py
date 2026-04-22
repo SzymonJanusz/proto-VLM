@@ -167,10 +167,18 @@ def box_iou(pred_mask: np.ndarray, gt_box: list) -> float:
 # Per-split evaluation
 # ---------------------------------------------------------------------------
 
-def find_best_slot(outputs, target_slot_idx: int = 0):
-    """Return the mask for the target slot (index 0 = first non-'other' prompt)."""
-    masks = outputs["object_decoder"].masks_as_image  # [B, n_slots, H, W]
-    return masks[0][target_slot_idx].cpu().numpy()    # (H, W)
+def find_best_slot_idx(outputs, query_emb: np.ndarray) -> int:
+    """Find the slot with highest cosine similarity to the query text embedding.
+
+    Uses projector_slots (language-aligned slot embeddings) from the model output.
+    Falls back to slot 0 if the key is not present.
+    """
+    if "projector_slots" not in outputs:
+        return 0
+    slot_embs = outputs["projector_slots"][0].cpu().float().numpy()  # [n_slots, dim]
+    q = query_emb / (np.linalg.norm(query_emb) + 1e-8)
+    sims = [float(np.dot(s / (np.linalg.norm(s) + 1e-8), q)) for s in slot_embs]
+    return int(np.argmax(sims))
 
 
 def evaluate_split(
@@ -186,7 +194,8 @@ def evaluate_split(
         ref_ids = ref_ids[:limit]
 
     per_ref = []
-    correct_mask = correct_box = total = 0
+    correct_mask = correct_box = total = missing = 0
+    sum_mask_iou = sum_box_iou = 0.0
 
     for ref_id in tqdm(ref_ids, desc=f"  [{split}]"):
         ref = refer.loadRefs(ref_ids=[ref_id])[0]
@@ -194,6 +203,7 @@ def evaluate_split(
         img_path = os.path.join(image_root, img_meta["file_name"])
 
         if not os.path.exists(img_path):
+            missing += 1
             continue
 
         image = Image.open(img_path).convert("RGB")
@@ -216,9 +226,12 @@ def evaluate_split(
                 print(f"  WARNING: forward failed for ref_id={ref_id}: {e}")
                 continue
 
-            slot_mask_224 = find_best_slot(outputs, target_slot_idx=0)
+            # Find best slot via cosine similarity to query embedding
+            query_emb = model.l2v.encode([expr])[0].cpu().float().numpy()
+            slot_idx = find_best_slot_idx(outputs, query_emb)
+            masks = outputs["object_decoder"].masks_as_image  # [B, n_slots, H, W]
+            slot_mask_224 = masks[0][slot_idx].cpu().numpy()
 
-            # Resize predicted mask to original image resolution
             slot_mask_orig = cv2.resize(
                 slot_mask_224, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR
             )
@@ -228,6 +241,8 @@ def evaluate_split(
 
         correct_mask += int(best_miou >= 0.5)
         correct_box += int(best_biou >= 0.5)
+        sum_mask_iou += best_miou
+        sum_box_iou += best_biou
         total += 1
 
         per_ref.append({
@@ -237,13 +252,26 @@ def evaluate_split(
             "box_iou": round(best_biou, 4),
         })
 
+    if missing > 0:
+        print(f"  WARNING: {missing}/{len(ref_ids)} refs skipped — image not found. "
+              f"Check --image_root or re-run download_data.sh.")
+
     acc_mask = correct_mask / total if total else 0.0
-    acc_box = correct_box / total if total else 0.0
-    summary = {"acc_mask_0.5": round(acc_mask, 4),
-               "acc_box_0.5": round(acc_box, 4),
-               "n": total}
+    acc_box  = correct_box  / total if total else 0.0
+    miou_mask = sum_mask_iou / total if total else 0.0
+    miou_box  = sum_box_iou  / total if total else 0.0
+
+    summary = {
+        "acc_mask_0.5": round(acc_mask, 4),
+        "acc_box_0.5":  round(acc_box, 4),
+        "miou_mask":    round(miou_mask, 4),
+        "miou_box":     round(miou_box, 4),
+        "n": total,
+        "n_skipped": missing,
+    }
     print(
-        f"  [{split}] Acc@0.5 mask={acc_mask:.4f}  box={acc_box:.4f}  (n={total})"
+        f"  [{split}] Acc@0.5 mask={acc_mask:.4f}  box={acc_box:.4f} | "
+        f"mIoU mask={miou_mask:.4f}  box={miou_box:.4f}  (n={total})"
     )
     return per_ref, summary
 
@@ -312,10 +340,11 @@ def main():
 
     # Print final table
     print("\n--- Summary ---")
-    print(f"{'Split':<10} {'Acc@0.5 mask':>14} {'Acc@0.5 box':>12} {'N':>8}")
-    print("-" * 48)
+    print(f"{'Split':<10} {'Acc@0.5 mask':>14} {'Acc@0.5 box':>12} {'mIoU mask':>10} {'mIoU box':>9} {'N':>8}")
+    print("-" * 70)
     for split, m in summary.items():
-        print(f"{split:<10} {m['acc_mask_0.5']:>14.4f} {m['acc_box_0.5']:>12.4f} {m['n']:>8}")
+        print(f"{split:<10} {m['acc_mask_0.5']:>14.4f} {m['acc_box_0.5']:>12.4f} "
+              f"{m['miou_mask']:>10.4f} {m['miou_box']:>9.4f} {m['n']:>8}")
 
 
 if __name__ == "__main__":

@@ -11,21 +11,30 @@ mkdir -p "$DATA/images/mscoco/images"
 # -----------------------------------------------------------------------
 # COCO train2014 images (~13 GB)
 # -----------------------------------------------------------------------
-if [ ! -d "$DATA/images/mscoco/images/train2014" ]; then
-    if [ -f "$DATA/train2014.zip" ]; then
-        echo "==> Found existing train2014.zip, unzipping..."
-    else
+TRAIN2014_DIR="$DATA/images/mscoco/images/train2014"
+TRAIN2014_EXPECTED=82783
+img_count=0
+[ -d "$TRAIN2014_DIR" ] && img_count=$(ls "$TRAIN2014_DIR" | wc -l)
+
+if [ "$img_count" -ge "$TRAIN2014_EXPECTED" ]; then
+    echo "==> COCO train2014 already complete ($img_count images), skipping."
+    rm -f "$DATA/train2014.zip"
+else
+    if [ "$img_count" -gt 0 ]; then
+        echo "==> Incomplete train2014 found ($img_count/$TRAIN2014_EXPECTED images). Re-downloading..."
+        rm -rf "$TRAIN2014_DIR"
+    fi
+    if [ ! -f "$DATA/train2014.zip" ]; then
         echo "==> Downloading COCO train2014 images (~13 GB)..."
         wget -c http://images.cocodataset.org/zips/train2014.zip \
             -O "$DATA/train2014.zip"
+    else
+        echo "==> Found existing train2014.zip, unzipping..."
     fi
     echo "==> Unzipping COCO train2014..."
     unzip -q "$DATA/train2014.zip" -d "$DATA/images/mscoco/images/"
     rm "$DATA/train2014.zip"
-    echo "==> COCO train2014 done."
-else
-    echo "==> COCO train2014 already downloaded, skipping."
-    rm -f "$DATA/train2014.zip"
+    echo "==> COCO train2014 done ($(ls $TRAIN2014_DIR | wc -l) images)."
 fi
 
 # -----------------------------------------------------------------------
