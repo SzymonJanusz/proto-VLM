@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=ctrlo-refer
 #SBATCH --partition=gpu-a100
+#SBATCH --account=plgunhype-gpu-a100
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
