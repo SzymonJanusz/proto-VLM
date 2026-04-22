@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=ctrlo-refer
-#SBATCH --partition=plgrid-gpu-a100   # check available partitions with: sinfo
+#SBATCH --partition=gpu-a100
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
@@ -35,13 +35,13 @@ OUTPUT_DIR=$WORKDIR/results_refer
 
 mkdir -p "$OUTPUT_DIR"
 
-# Copy inference script to workdir (if running from a different source dir)
-cp "$WORKDIR/../inference_refer.py" "$WORKDIR/inference_refer.py" 2>/dev/null || true
+# Use inference script from the repo clone
+SCRIPT=/net/people/plgrid/plgabedychaj/PycharmProjects/proto-VLM/inference_refer.py
 
 # --- RefCOCO ---
 echo ""
 echo "==> Running RefCOCO inference..."
-python "$WORKDIR/inference_refer.py" \
+python "$SCRIPT" \
     --data_root "$DATA_ROOT" \
     --dataset refcoco \
     --splitBy unc \
@@ -55,7 +55,7 @@ python "$WORKDIR/inference_refer.py" \
 # --- RefCOCO+ ---
 echo ""
 echo "==> Running RefCOCO+ inference..."
-python "$WORKDIR/inference_refer.py" \
+python "$SCRIPT" \
     --data_root "$DATA_ROOT" \
     --dataset "refcoco+" \
     --splitBy unc \

@@ -98,23 +98,21 @@ echo "==> refer.py patched (skipping broken C extension build)."
 # Requires:
 #   1. Access granted to https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
 #   2. HF token set: run `huggingface-cli login` once, or export HUGGING_FACE_HUB_TOKEN=<token>
-echo "==> Pre-downloading LLM2Vec model (this may take a while)..."
+# Download LLM2Vec model files to cache (no RAM loading — that happens on the compute node).
+# Requires approved access to https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
+echo "==> Downloading LLM2Vec model weights to cache (no loading)..."
 if ! huggingface-cli whoami &>/dev/null; then
-    echo "ERROR: Not logged into HuggingFace."
-    echo "  Run: huggingface-cli login"
-    echo "  Then re-run: bash setup.sh"
-    exit 1
+    echo "WARNING: Not logged into HuggingFace. Run: huggingface-cli login"
+else
+    huggingface-cli download McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp \
+        --cache-dir "$HF_HUB_CACHE" \
+        && echo "==> LLM2Vec base model cached." \
+        || echo "WARNING: LLM2Vec download failed (access pending?). Re-run setup.sh once access is approved."
+    huggingface-cli download McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-unsup-simcse \
+        --cache-dir "$HF_HUB_CACHE" \
+        && echo "==> LLM2Vec adapter cached." \
+        || echo "WARNING: LLM2Vec adapter download failed."
 fi
-python -c "
-from llm2vec import LLM2Vec
-LLM2Vec.from_pretrained(
-    'McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp',
-    peft_model_name_or_path='McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-unsup-simcse',
-    device_map='cpu',
-    torch_dtype='auto',
-)
-print('LLM2Vec model cached successfully.')
-"
 
 # --- Download pretrained CTRL-O checkpoint ---
 echo "==> Downloading pretrained CTRL-O model from HuggingFace..."
