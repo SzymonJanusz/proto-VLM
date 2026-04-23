@@ -112,13 +112,26 @@ def main():
     if "projector_slots" in outputs:
         ps = outputs["projector_slots"]
         print(f"  shape: {tuple(ps.shape)}")
-        print(f"  dtype: {ps.dtype}")
-        query_emb = l2v.encode([expr])[0].cpu().float().numpy()
         slot_embs = ps[0].cpu().float().numpy()
-        q = query_emb / (np.linalg.norm(query_emb) + 1e-8)
-        sims = [float(np.dot(s / (np.linalg.norm(s) + 1e-8), q)) for s in slot_embs]
-        print(f"  cosine sims to query: {[round(s, 4) for s in sims]}")
-        print(f"  argmax: {int(np.argmax(sims))}")
+
+        # Method A: compare against raw LLM2Vec (OLD approach)
+        raw_emb = l2v.encode([expr])[0].cpu().float().numpy()
+        q_raw = raw_emb / (np.linalg.norm(raw_emb) + 1e-8)
+        sims_raw = [float(np.dot(s / (np.linalg.norm(s) + 1e-8), q_raw)) for s in slot_embs]
+        print(f"  [OLD] cosine sims vs raw LLM2Vec: {[round(s, 4) for s in sims_raw]}  argmax={int(np.argmax(sims_raw))}")
+
+        # Method B: compare against lang_embedding from model (NEW approach)
+        if "lang_embedding" in outputs:
+            lang_emb = outputs["lang_embedding"][0][0].cpu().float().numpy()
+            q_lang = lang_emb / (np.linalg.norm(lang_emb) + 1e-8)
+            sims_lang = [float(np.dot(s / (np.linalg.norm(s) + 1e-8), q_lang)) for s in slot_embs]
+            print(f"  [NEW] cosine sims vs lang_embedding: {[round(s, 4) for s in sims_lang]}  argmax={int(np.argmax(sims_lang))}")
+
+            # Also check: how similar is lang_embedding[0] vs lang_embedding[1..6] to the slots?
+            other_emb = outputs["lang_embedding"][0][1].cpu().float().numpy()
+            q_other = other_emb / (np.linalg.norm(other_emb) + 1e-8)
+            sims_other = [float(np.dot(s / (np.linalg.norm(s) + 1e-8), q_other)) for s in slot_embs]
+            print(f"  [NEW] cosine sims vs 'other' lang_emb: {[round(s, 4) for s in sims_other]}  argmax={int(np.argmax(sims_other))}")
 
     print("\n=== object_decoder tensor attributes ===")
     od = outputs.get("object_decoder")

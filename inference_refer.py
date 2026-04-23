@@ -167,15 +167,17 @@ def box_iou(pred_mask: np.ndarray, gt_box: list) -> float:
 # Per-split evaluation
 # ---------------------------------------------------------------------------
 
-def find_best_slot_idx(outputs, query_emb: np.ndarray) -> int:
-    """Find the slot with highest cosine similarity to the query text embedding.
+def find_best_slot_idx(outputs, query_slot_idx: int = 0) -> int:
+    """Find the slot with highest cosine similarity to the query's lang_embedding.
 
-    Uses projector_slots (language-aligned slot embeddings) from the model output.
-    Falls back to slot 0 if the key is not present.
+    projector_slots is trained (via contrastive loss) to align with lang_embedding,
+    NOT with raw LLM2Vec output. We must compare within the same space.
+    Falls back to query_slot_idx if keys are missing.
     """
-    if "projector_slots" not in outputs:
-        return 0
-    slot_embs = outputs["projector_slots"][0].cpu().float().numpy()  # [n_slots, dim]
+    if "projector_slots" not in outputs or "lang_embedding" not in outputs:
+        return query_slot_idx
+    slot_embs = outputs["projector_slots"][0].cpu().float().numpy()   # [n_slots, 4096]
+    query_emb = outputs["lang_embedding"][0][query_slot_idx].cpu().float().numpy()  # [4096]
     q = query_emb / (np.linalg.norm(query_emb) + 1e-8)
     sims = [float(np.dot(s / (np.linalg.norm(s) + 1e-8), q)) for s in slot_embs]
     return int(np.argmax(sims))
@@ -226,9 +228,8 @@ def evaluate_split(
                 print(f"  WARNING: forward failed for ref_id={ref_id}: {e}")
                 continue
 
-            # Find best slot via cosine similarity to query embedding
-            query_emb = model.l2v.encode([expr])[0].cpu().float().numpy()
-            slot_idx = find_best_slot_idx(outputs, query_emb)
+            # Find best slot: compare projector_slots against lang_embedding (same projected space)
+            slot_idx = find_best_slot_idx(outputs)
             masks = outputs["object_decoder"].masks_as_image  # [B, n_slots, H, W]
             slot_mask_224 = masks[0][slot_idx].cpu().numpy()
 
