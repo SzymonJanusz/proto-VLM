@@ -288,12 +288,12 @@ def parse_args():
     p.add_argument("--data_root", required=True,
                    help="Root dir containing refcoco/ and refcoco+/ folders")
     p.add_argument("--dataset", default="refcoco",
-                   choices=["refcoco", "refcoco+"],
+                   choices=["refcoco", "refcoco+", "refcocog"],
                    help="Which REFER dataset to evaluate")
     p.add_argument("--splitBy", default="unc",
-                   help="Split provider (unc or google)")
+                   help="Split provider (unc / google). Default: unc. Use google for refcocog.")
     p.add_argument("--splits", nargs="+", default=["val", "testA", "testB"],
-                   help="Which splits to run (val testA testB)")
+                   help="Which splits to run. refcocog(google) only has val.")
     p.add_argument("--checkpoint", required=True,
                    help="Path to CTRL-O .ckpt file")
     p.add_argument("--config", required=True,

@@ -67,6 +67,20 @@ python "$SCRIPT" \
     --output_dir "$OUTPUT_DIR" \
     --device cuda
 
+# --- Gref (RefCOCOg, Google split) ---
+echo ""
+echo "==> Running Gref (refcocog/google) inference..."
+python "$SCRIPT" \
+    --data_root "$DATA_ROOT" \
+    --dataset "refcocog" \
+    --splitBy google \
+    --splits val \
+    --checkpoint "$CHECKPOINT" \
+    --config "$CONFIG" \
+    --image_root "$IMAGE_ROOT" \
+    --output_dir "$OUTPUT_DIR" \
+    --device cuda
+
 echo ""
 echo "==> All done at $(date)"
 echo "==> Results in $OUTPUT_DIR"

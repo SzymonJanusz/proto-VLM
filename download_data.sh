@@ -76,6 +76,8 @@ download_refer() {
 # Wayback Machine timestamps from the archived URLs in github.com/lichengunc/refer/issues/14
 download_refer "refcoco"  "011718"
 download_refer "refcoco+" "011656"
+# refcocog: no known exact timestamp — Wayback Machine will redirect to closest archive
+download_refer "refcocog" ""
 
 # -----------------------------------------------------------------------
 # Verify structure
@@ -83,10 +85,11 @@ download_refer "refcoco+" "011656"
 echo ""
 echo "==> Data directory structure:"
 ls -lh "$DATA/"
-for name in refcoco refcoco+; do
+for name in refcoco refcoco+ refcocog; do
     echo ""
     echo "  $name/:"
     ls "$DATA/$name/" 2>/dev/null || echo "    MISSING"
 done
 echo ""
-echo "Expected files per dataset: instances.json  refs(unc).p"
+echo "Expected files: refcoco/refcoco+: instances.json refs(unc).p"
+echo "                refcocog:         instances.json refs(google).p"
