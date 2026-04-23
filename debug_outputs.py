@@ -102,19 +102,10 @@ def main():
     for k, v in outputs.items():
         if isinstance(v, torch.Tensor):
             print(f"  {k}: Tensor {tuple(v.shape)} dtype={v.dtype}")
-        elif hasattr(v, "__dict__"):
-            print(f"  {k}: {type(v).__name__}")
-            for attr in dir(v):
-                if not attr.startswith("_"):
-                    val = getattr(v, attr, None)
-                    if isinstance(val, torch.Tensor):
-                        print(f"      .{attr}: Tensor {tuple(val.shape)}")
-                    elif not callable(val) and val is not None:
-                        print(f"      .{attr}: {type(val).__name__}")
         elif isinstance(v, dict):
             print(f"  {k}: dict keys={list(v.keys())}")
         else:
-            print(f"  {k}: {type(v).__name__} = {v}")
+            print(f"  {k}: {type(v).__name__}")
 
     print("\n=== projector_slots present? ===")
     print("projector_slots" in outputs)
@@ -122,7 +113,6 @@ def main():
         ps = outputs["projector_slots"]
         print(f"  shape: {tuple(ps.shape)}")
         print(f"  dtype: {ps.dtype}")
-        # Cosine similarity between each slot and query
         query_emb = l2v.encode([expr])[0].cpu().float().numpy()
         slot_embs = ps[0].cpu().float().numpy()
         q = query_emb / (np.linalg.norm(query_emb) + 1e-8)
@@ -130,16 +120,28 @@ def main():
         print(f"  cosine sims to query: {[round(s, 4) for s in sims]}")
         print(f"  argmax: {int(np.argmax(sims))}")
 
-    print("\n=== object_decoder attributes ===")
+    print("\n=== object_decoder tensor attributes ===")
     od = outputs.get("object_decoder")
     if od is not None:
-        for attr in dir(od):
-            if not attr.startswith("_"):
-                val = getattr(od, attr, None)
+        for attr in vars(od) if hasattr(od, "__dict__") else []:
+            try:
+                val = getattr(od, attr)
                 if isinstance(val, torch.Tensor):
                     print(f"  .{attr}: Tensor {tuple(val.shape)}")
                 elif not callable(val) and val is not None:
                     print(f"  .{attr}: {type(val).__name__} = {val}")
+            except Exception:
+                pass
+        # Also check common named attributes explicitly
+        for attr in ("masks", "masks_as_image", "slots", "slot_features",
+                     "attn", "attention", "object_features"):
+            try:
+                val = getattr(od, attr, None)
+                if val is not None and attr not in vars(od).get("__dict__", {}):
+                    if isinstance(val, torch.Tensor):
+                        print(f"  .{attr} (property): Tensor {tuple(val.shape)}")
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     main()
