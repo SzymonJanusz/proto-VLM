@@ -196,8 +196,12 @@ def evaluate_split(
         ref_ids = ref_ids[:limit]
 
     per_ref = []
-    correct_mask = correct_box = total = missing = 0
-    sum_mask_iou = sum_box_iou = 0.0
+    # oracle accumulators: max IoU over sentences per reference
+    correct_mask_oracle = correct_box_oracle = n_refs = missing = 0
+    sum_mask_iou_oracle = sum_box_iou_oracle = 0.0
+    # per-sentence accumulators: standard REFER benchmark protocol
+    correct_mask_avg = correct_box_avg = n_sents = 0
+    sum_mask_iou_avg = sum_box_iou_avg = 0.0
 
     for ref_id in tqdm(ref_ids, desc=f"  [{split}]"):
         ref = refer.loadRefs(ref_ids=[ref_id])[0]
@@ -237,42 +241,63 @@ def evaluate_split(
                 slot_mask_224, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR
             )
 
-            best_miou = max(best_miou, mask_iou(slot_mask_orig, gt_mask_orig))
-            best_biou = max(best_biou, box_iou(slot_mask_orig, gt_box))
+            sent_miou = mask_iou(slot_mask_orig, gt_mask_orig)
+            sent_biou = box_iou(slot_mask_orig, gt_box)
 
-        correct_mask += int(best_miou >= 0.5)
-        correct_box += int(best_biou >= 0.5)
-        sum_mask_iou += best_miou
-        sum_box_iou += best_biou
-        total += 1
+            # per-sentence accumulation (standard protocol)
+            correct_mask_avg += int(sent_miou >= 0.5)
+            correct_box_avg  += int(sent_biou >= 0.5)
+            sum_mask_iou_avg += sent_miou
+            sum_box_iou_avg  += sent_biou
+            n_sents += 1
+
+            # oracle tracking
+            best_miou = max(best_miou, sent_miou)
+            best_biou = max(best_biou, sent_biou)
+
+        # oracle accumulation (one entry per reference)
+        correct_mask_oracle += int(best_miou >= 0.5)
+        correct_box_oracle  += int(best_biou >= 0.5)
+        sum_mask_iou_oracle += best_miou
+        sum_box_iou_oracle  += best_biou
+        n_refs += 1
 
         per_ref.append({
             "ref_id": ref_id,
             "split": split,
-            "mask_iou": round(best_miou, 4),
-            "box_iou": round(best_biou, 4),
+            "mask_iou_oracle": round(best_miou, 4),
+            "box_iou_oracle":  round(best_biou, 4),
         })
 
     if missing > 0:
         print(f"  WARNING: {missing}/{len(ref_ids)} refs skipped — image not found. "
               f"Check --image_root or re-run download_data.sh.")
 
-    acc_mask = correct_mask / total if total else 0.0
-    acc_box  = correct_box  / total if total else 0.0
-    miou_mask = sum_mask_iou / total if total else 0.0
-    miou_box  = sum_box_iou  / total if total else 0.0
+    def _safe_div(a, b):
+        return round(a / b, 4) if b else 0.0
 
     summary = {
-        "acc_mask_0.5": round(acc_mask, 4),
-        "acc_box_0.5":  round(acc_box, 4),
-        "miou_mask":    round(miou_mask, 4),
-        "miou_box":     round(miou_box, 4),
-        "n": total,
-        "n_skipped": missing,
+        # oracle metrics (max over sentences per reference)
+        "acc_mask_0.5":     _safe_div(correct_mask_oracle, n_refs),
+        "acc_box_0.5":      _safe_div(correct_box_oracle,  n_refs),
+        "miou_mask":        _safe_div(sum_mask_iou_oracle, n_refs),
+        "miou_box":         _safe_div(sum_box_iou_oracle,  n_refs),
+        "n":                n_refs,
+        # per-sentence avg metrics (standard REFER benchmark protocol)
+        "acc_mask_0.5_avg": _safe_div(correct_mask_avg, n_sents),
+        "acc_box_0.5_avg":  _safe_div(correct_box_avg,  n_sents),
+        "miou_mask_avg":    _safe_div(sum_mask_iou_avg, n_sents),
+        "miou_box_avg":     _safe_div(sum_box_iou_avg,  n_sents),
+        "n_sentences":      n_sents,
+        "n_skipped":        missing,
     }
     print(
-        f"  [{split}] Acc@0.5 mask={acc_mask:.4f}  box={acc_box:.4f} | "
-        f"mIoU mask={miou_mask:.4f}  box={miou_box:.4f}  (n={total})"
+        f"  [{split}] oracle   Acc@0.5 mask={summary['acc_mask_0.5']:.4f}  box={summary['acc_box_0.5']:.4f} | "
+        f"mIoU mask={summary['miou_mask']:.4f}  box={summary['miou_box']:.4f}  (n_refs={n_refs})"
+    )
+    print(
+        f"  [{split}] sent-avg Acc@0.5 mask={summary['acc_mask_0.5_avg']:.4f}  box={summary['acc_box_0.5_avg']:.4f} | "
+        f"mIoU mask={summary['miou_mask_avg']:.4f}  box={summary['miou_box_avg']:.4f}  (n_sent={n_sents})"
     )
     return per_ref, summary
 
@@ -340,12 +365,15 @@ def main():
     print(f"\n==> Results saved to {out_file}")
 
     # Print final table
+    hdr = f"{'Split':<10} {'Protocol':<10} {'Acc@0.5 mask':>14} {'Acc@0.5 box':>12} {'mIoU mask':>10} {'mIoU box':>9} {'N':>8}"
     print("\n--- Summary ---")
-    print(f"{'Split':<10} {'Acc@0.5 mask':>14} {'Acc@0.5 box':>12} {'mIoU mask':>10} {'mIoU box':>9} {'N':>8}")
-    print("-" * 70)
+    print(hdr)
+    print("-" * len(hdr))
     for split, m in summary.items():
-        print(f"{split:<10} {m['acc_mask_0.5']:>14.4f} {m['acc_box_0.5']:>12.4f} "
+        print(f"{split:<10} {'oracle':<10} {m['acc_mask_0.5']:>14.4f} {m['acc_box_0.5']:>12.4f} "
               f"{m['miou_mask']:>10.4f} {m['miou_box']:>9.4f} {m['n']:>8}")
+        print(f"{'':<10} {'sent-avg':<10} {m['acc_mask_0.5_avg']:>14.4f} {m['acc_box_0.5_avg']:>12.4f} "
+              f"{m['miou_mask_avg']:>10.4f} {m['miou_box_avg']:>9.4f} {m['n_sentences']:>8}")
 
 
 if __name__ == "__main__":
