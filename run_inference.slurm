@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=08:00:00
+#SBATCH --time=16:00:00
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
@@ -33,8 +33,10 @@ CONFIG=$WORKDIR/pretrained_models/ctrlo/config.yaml
 IMAGE_ROOT=$WORKDIR/data/images/mscoco/images/train2014
 DATA_ROOT=$WORKDIR/data
 OUTPUT_DIR=$WORKDIR/results_refer
+OUTPUT_DIR_S1=$WORKDIR/results_refer_single_sent
 
 mkdir -p "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR_S1"
 
 # Use inference script from the directory where sbatch was submitted
 SCRIPT=$SLURM_SUBMIT_DIR/inference_refer.py
@@ -81,6 +83,49 @@ python "$SCRIPT" \
     --output_dir "$OUTPUT_DIR" \
     --device cuda
 
+# --- Single-sentence runs (paper-comparable protocol) ---
+echo ""
+echo "==> Running single-sentence RefCOCO inference..."
+python "$SCRIPT" \
+    --data_root "$DATA_ROOT" \
+    --dataset refcoco \
+    --splitBy unc \
+    --splits val testA testB \
+    --checkpoint "$CHECKPOINT" \
+    --config "$CONFIG" \
+    --image_root "$IMAGE_ROOT" \
+    --output_dir "$OUTPUT_DIR_S1" \
+    --single-sentence \
+    --device cuda
+
+echo ""
+echo "==> Running single-sentence RefCOCO+ inference..."
+python "$SCRIPT" \
+    --data_root "$DATA_ROOT" \
+    --dataset "refcoco+" \
+    --splitBy unc \
+    --splits val testA testB \
+    --checkpoint "$CHECKPOINT" \
+    --config "$CONFIG" \
+    --image_root "$IMAGE_ROOT" \
+    --output_dir "$OUTPUT_DIR_S1" \
+    --single-sentence \
+    --device cuda
+
+echo ""
+echo "==> Running single-sentence Gref inference..."
+python "$SCRIPT" \
+    --data_root "$DATA_ROOT" \
+    --dataset "refcocog" \
+    --splitBy google \
+    --splits val \
+    --checkpoint "$CHECKPOINT" \
+    --config "$CONFIG" \
+    --image_root "$IMAGE_ROOT" \
+    --output_dir "$OUTPUT_DIR_S1" \
+    --single-sentence \
+    --device cuda
+
 echo ""
 echo "==> All done at $(date)"
-echo "==> Results in $OUTPUT_DIR"
+echo "==> Results in $OUTPUT_DIR and $OUTPUT_DIR_S1"

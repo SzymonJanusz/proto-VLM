@@ -179,6 +179,7 @@ def evaluate_split(
     model: CtrloModel,
     image_root: str,
     limit: int = 0,
+    single_sentence: bool = False,
 ) -> tuple:
     """Returns (per_ref_results, summary_dict)."""
     ref_ids = refer.getRefIds(split=split)
@@ -214,7 +215,8 @@ def evaluate_split(
         best_miou = best_biou = 0.0
         best_mI = best_mU = 0
 
-        for sent in ref["sentences"]:
+        sentences = ref["sentences"][:1] if single_sentence else ref["sentences"]
+        for sent in sentences:
             expr = sent["raw"]
             # Query goes in slot 0; remaining 6 slots are "other"
             prompt = [expr] + ["other"] * 6
@@ -333,6 +335,8 @@ def parse_args():
                    help="Device: cuda or cpu")
     p.add_argument("--limit", type=int, default=0,
                    help="Limit number of refs per split (0 = all, useful for smoke tests)")
+    p.add_argument("--single-sentence", action="store_true",
+                   help="Evaluate only the first sentence per reference (paper-comparable protocol)")
     return p.parse_args()
 
 
@@ -356,7 +360,8 @@ def main():
     for split in args.splits:
         print(f"\n=== {args.dataset} / {split} ===")
         per_ref, split_summary = evaluate_split(
-            refer, split, model, args.image_root, limit=args.limit
+            refer, split, model, args.image_root,
+            limit=args.limit, single_sentence=args.single_sentence,
         )
         all_per_ref.extend(per_ref)
         summary[split] = split_summary
