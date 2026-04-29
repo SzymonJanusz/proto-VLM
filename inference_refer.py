@@ -171,20 +171,6 @@ def box_iou(pred_mask: np.ndarray, gt_box: list) -> float:
 # Per-split evaluation
 # ---------------------------------------------------------------------------
 
-def find_best_slot_idx(outputs, query_slot_idx: int = 0) -> int:
-    """Find the slot with highest cosine similarity to the query's lang_embedding.
-
-    projector_slots is trained (via contrastive loss) to align with lang_embedding,
-    NOT with raw LLM2Vec output. We must compare within the same space.
-    Falls back to query_slot_idx if keys are missing.
-    """
-    if "projector_slots" not in outputs or "lang_embedding" not in outputs:
-        return query_slot_idx
-    slot_embs = outputs["projector_slots"][0].cpu().float().numpy()   # [n_slots, 4096]
-    query_emb = outputs["lang_embedding"][0][query_slot_idx].cpu().float().numpy()  # [4096]
-    q = query_emb / (np.linalg.norm(query_emb) + 1e-8)
-    sims = [float(np.dot(s / (np.linalg.norm(s) + 1e-8), q)) for s in slot_embs]
-    return int(np.argmax(sims))
 
 
 def evaluate_split(
@@ -239,8 +225,8 @@ def evaluate_split(
                 print(f"  WARNING: forward failed for ref_id={ref_id}: {e}")
                 continue
 
-            # Find best slot: compare projector_slots against lang_embedding (same projected space)
-            slot_idx = find_best_slot_idx(outputs)
+            # Query is always placed at slot 0; take slot 0's mask directly (CTRL-O protocol)
+            slot_idx = 0
             masks = outputs["object_decoder"].masks_as_image  # [B, n_slots, H, W]
             slot_mask_224 = masks[0][slot_idx].cpu().numpy()
 
@@ -249,7 +235,7 @@ def evaluate_split(
             )
 
             mI, mU = mask_IU(slot_mask_orig, gt_mask_orig)
-            sent_miou = float(mI) / float(mU + 1e-8)
+            sent_miou = float(mI) / float(mU) if mU > 0 else 0.0
             sent_biou = box_iou(slot_mask_orig, gt_box)
 
             # per-sentence accumulation (standard protocol)
@@ -296,14 +282,14 @@ def evaluate_split(
         "acc_box_0.5":        _safe_div(correct_box_oracle,  n_refs),
         "miou_mask":          _safe_div(sum_mask_iou_oracle, n_refs),
         "miou_box":           _safe_div(sum_box_iou_oracle,  n_refs),
-        "omiou_mask":         round(cum_mask_I_oracle / (cum_mask_U_oracle + 1e-8), 4),
+        "omiou_mask":         round(cum_mask_I_oracle / cum_mask_U_oracle, 4) if cum_mask_U_oracle > 0 else 0.0,
         "n":                  n_refs,
         # per-sentence avg metrics (standard REFER benchmark protocol)
         "acc_mask_0.5_avg":   _safe_div(correct_mask_avg, n_sents),
         "acc_box_0.5_avg":    _safe_div(correct_box_avg,  n_sents),
         "miou_mask_avg":      _safe_div(sum_mask_iou_avg, n_sents),
         "miou_box_avg":       _safe_div(sum_box_iou_avg,  n_sents),
-        "omiou_mask_avg":     round(cum_mask_I_avg / (cum_mask_U_avg + 1e-8), 4),
+        "omiou_mask_avg":     round(cum_mask_I_avg / cum_mask_U_avg, 4) if cum_mask_U_avg > 0 else 0.0,
         "n_sentences":        n_sents,
         "n_skipped":          missing,
     }
