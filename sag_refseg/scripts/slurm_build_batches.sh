@@ -27,13 +27,14 @@ source "$SCRATCH/venv/bin/activate"
 export HF_HUB_CACHE="$SCRATCH/.cache/huggingface/hub"
 export TRANSFORMERS_CACHE="$SCRATCH/.cache/huggingface/hub"
 
-REFER_DIR="$SCRATCH/refer"
+# refer annotations are stored under ctrl-o/data (refcoco/, refcocog/, refcoco+/)
+REFER_DIR="$SCRATCH/ctrl-o"
 COCO_DIR="$SCRATCH/ctrl-o/data/images/mscoco/images"
 OUTPUT_DIR="$SCRATCH/data/refcoco"
 VOCAB_FILE="$REPO/data/vocabulary_Gref.txt"
 
-# refer library must be on PYTHONPATH (no C extension needed, pure Python)
-export PYTHONPATH="$REFER_DIR:$PYTHONPATH"
+# refer library (pure Python) must be on PYTHONPATH
+export PYTHONPATH="$SCRATCH/refer:$PYTHONPATH"
 
 echo "==> Job started on $(hostname) at $(date)"
 echo "==> COCO images: $COCO_DIR"
