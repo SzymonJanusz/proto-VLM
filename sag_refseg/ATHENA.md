@@ -199,6 +199,23 @@ The refer library is not on `PYTHONPATH`. The SLURM scripts set this automatical
 export PYTHONPATH="$SCRATCH/refer:$PYTHONPATH"
 ```
 
+### `FileNotFoundError: refs(google).p` (refer annotation data missing)
+The refer library's `data/` directory is empty after a plain `git clone` — the annotation zips must be downloaded separately. Fix:
+```bash
+cd $SCRATCH/refer/data
+wget http://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip
+wget http://bvisionweb1.cs.unc.edu/licheng/referit/data/refcoco.zip
+wget "http://bvisionweb1.cs.unc.edu/licheng/referit/data/refcoco+.zip"
+unzip refcocog.zip  && rm refcocog.zip
+unzip refcoco.zip   && rm refcoco.zip
+unzip 'refcoco+.zip' && rm 'refcoco+.zip'
+```
+Or if the ctrl-o experiment already has them, use that path instead:
+```bash
+ls $SCRATCH/ctrl-o/refer/data/   # check
+# then resubmit with REFER_DIR pointing there
+```
+
 ### `FileNotFoundError: vocabulary_Gref.txt`
 Re-run setup: `bash sag_refseg/scripts/setup_athena.sh`  
 Or manually: `curl -fsSL https://raw.githubusercontent.com/kdwonn/SaG/master/data/vocabulary_Gref.txt -o ~/proto-VLM/data/vocabulary_Gref.txt`

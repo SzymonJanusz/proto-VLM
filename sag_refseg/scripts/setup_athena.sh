@@ -76,7 +76,25 @@ print('refer.py patched.')
 PYEOF
 
 # --------------------------------------------------------------------------- #
-# 4. Vocabulary file
+# 4. refer annotation data (not in git — download from UNC)
+# --------------------------------------------------------------------------- #
+REFER_DATA_DIR="$REFER_DIR/data"
+for DATASET in refcocog refcoco "refcoco+"; do
+    PICKLE=$(ls "$REFER_DATA_DIR/$DATASET/"*.p 2>/dev/null | head -1)
+    if [ -z "$PICKLE" ]; then
+        echo "==> Downloading $DATASET annotations..."
+        wget -q "http://bvisionweb1.cs.unc.edu/licheng/referit/data/${DATASET}.zip" \
+            -O "$REFER_DATA_DIR/${DATASET}.zip"
+        unzip -q "$REFER_DATA_DIR/${DATASET}.zip" -d "$REFER_DATA_DIR"
+        rm "$REFER_DATA_DIR/${DATASET}.zip"
+        echo "    done: $(ls $REFER_DATA_DIR/$DATASET/)"
+    else
+        echo "==> $DATASET annotations already present, skipping"
+    fi
+done
+
+# --------------------------------------------------------------------------- #
+# 6. Vocabulary file
 # --------------------------------------------------------------------------- #
 VOCAB_DIR="$REPO/data"
 mkdir -p "$VOCAB_DIR"
@@ -92,7 +110,7 @@ else
 fi
 
 # --------------------------------------------------------------------------- #
-# 5. Pre-download bert-base-uncased weights to HF cache
+# 7. Pre-download bert-base-uncased weights to HF cache
 # --------------------------------------------------------------------------- #
 echo "==> Caching bert-base-uncased..."
 export HF_HUB_CACHE="$SCRATCH/.cache/huggingface/hub"
