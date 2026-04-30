@@ -1,0 +1,40 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Experiment outputs (on scratch, not in repo)
+checkpoints/
+eval_results/
+results/
+results_grey/
+results_vlm/
+cached_features/
+pretrained_checkpoints/
+experiments/
+descriptions/
+paper/
+imagenet_tiny/
+caltech101/
+data/
+*.out
+*.err
+xDDD
+
+# Jupyter
+.ipynb_checkpoints/
