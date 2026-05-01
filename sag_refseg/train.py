@@ -269,6 +269,7 @@ def main():
     if not args.no_wandb:
         wandb.init(
             project='sag_refseg',
+            entity='gmum',
             name=args.remark or f'sag_{args.dataset}',
             group=args.wandb_group or args.dataset,
             config=vars(args),

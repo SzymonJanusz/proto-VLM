@@ -34,7 +34,7 @@ def get_img_backbone(arch, pretrained, num_layers, img_size):
         cfg["d_ff"] = 4 * cfg["d_model"]
         cfg["n_layers"] = num_layers
         if arch in default_cfgs:
-            default_cfg = default_cfgs[arch]
+            default_cfg = dict(default_cfgs[arch])
         else:
             default_cfg = dict(
                 pretrained=False,
