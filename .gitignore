@@ -32,6 +32,8 @@ paper/
 imagenet_tiny/
 caltech101/
 data/
+!sag_refseg/data/
+!sag_refseg/data/**
 *.out
 *.err
 xDDD
