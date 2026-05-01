@@ -37,6 +37,11 @@ def _attn_map_to_pred(attn_map, feat_map_size, label_shape, threshold):
     return a >= threshold
 
 
+def _unwrap(block):
+    """Return inner fn when block is a PreNorm wrapper, else return block directly."""
+    return block.fn if hasattr(block, 'fn') else block
+
+
 # --------------------------------------------------------------------------- #
 # Feature encoding
 # --------------------------------------------------------------------------- #
@@ -48,8 +53,8 @@ def encode_data(model, data_loader, args):
     n = len(data_loader.dataset)
     agg_depth = len(model.encoders.img_enc.set_pred_module.agg.agg_blocks)
     num_slot = model.encoders.img_enc.set_pred_module.agg.num_latents
-    head = model.encoders.img_enc.set_pred_module.agg.agg_blocks[0][0].fn.heads
-    head_cm = model.cma.attn.fn.heads
+    head = _unwrap(model.encoders.img_enc.set_pred_module.agg.agg_blocks[0][0]).heads
+    head_cm = _unwrap(model.cma.attn).heads
     feat_map_cells = int(args.crop_size / 16) ** 2
 
     slot_a_maps = torch.zeros([n, agg_depth, num_slot, feat_map_cells],
@@ -62,9 +67,9 @@ def encode_data(model, data_loader, args):
         img, txt, txt_len, ids = data
         img, txt, txt_len = img.cuda(), txt.cuda(), txt_len.cuda()
 
-        hdlr1 = model.encoders.img_enc.set_pred_module.agg.agg_blocks[0][0].fn.attn_holder.\
+        hdlr1 = _unwrap(model.encoders.img_enc.set_pred_module.agg.agg_blocks[0][0]).attn_holder.\
             register_forward_hook(f_out_hook(slot_buf))
-        hdlr2 = model.cma.attn.fn.attn_holder.\
+        hdlr2 = _unwrap(model.cma.attn).attn_holder.\
             register_forward_hook(f_out_hook(cm_buf))
 
         with torch.no_grad():

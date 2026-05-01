@@ -36,6 +36,11 @@ def compute_mask_IU(masks, target):
     return I, U
 
 
+def _unwrap(block):
+    """Return inner fn when block is a PreNorm wrapper, else return block directly."""
+    return block.fn if hasattr(block, 'fn') else block
+
+
 def encode_data(model, data_loader, crop_size, img_num_embeds, embed_dim, args):
     """Encode all images and captions; collect slot and cross-modal attention maps."""
     from sag_refseg.utils import f_out_hook
@@ -46,8 +51,8 @@ def encode_data(model, data_loader, crop_size, img_num_embeds, embed_dim, args):
     n = len(data_loader.dataset)
     agg_depth = len(model.encoders.img_enc.set_pred_module.agg.agg_blocks)
     num_slot = model.encoders.img_enc.set_pred_module.agg.num_latents
-    head = model.encoders.img_enc.set_pred_module.agg.agg_blocks[0][0].fn.heads
-    head_cm = model.cma.attn.fn.heads
+    head = _unwrap(model.encoders.img_enc.set_pred_module.agg.agg_blocks[0][0]).heads
+    head_cm = _unwrap(model.cma.attn).heads
 
     slot_a_maps = torch.zeros([n, agg_depth, num_slot, int(crop_size / 16) ** 2],
                               requires_grad=False).cuda()
@@ -59,9 +64,9 @@ def encode_data(model, data_loader, crop_size, img_num_embeds, embed_dim, args):
         img, txt, txt_len, ids = data
         img, txt, txt_len = img.cuda(), txt.cuda(), txt_len.cuda()
 
-        hdlr1 = model.encoders.img_enc.set_pred_module.agg.agg_blocks[0][0].fn.attn_holder.\
+        hdlr1 = _unwrap(model.encoders.img_enc.set_pred_module.agg.agg_blocks[0][0]).attn_holder.\
             register_forward_hook(f_out_hook(slot_a_map_buf))
-        hdlr2 = model.cma.attn.fn.attn_holder.\
+        hdlr2 = _unwrap(model.cma.attn).attn_holder.\
             register_forward_hook(f_out_hook(cm_a_map_buf))
 
         cm_emb, img_emb, txt_emb, _, _, _ = model.forward(img, txt, txt_len)
