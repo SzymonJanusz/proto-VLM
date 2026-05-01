@@ -110,8 +110,15 @@ def get_loader(data_root, dataset, split, img_backbone, crop_size, use_aug,
                batch_size=32, shuffle=True, num_workers=4):
     """Factory that returns a DataLoader for a given dataset/split."""
     root = osp.join(data_root, dataset)
+    batch_dir = osp.join(root, split + '_batch')
     transform = get_image_transform(split, img_backbone, crop_size, use_aug)
     ds = ReferDataset(root=root, splitset=split, transform=transform)
+    if len(ds) == 0:
+        raise RuntimeError(
+            f"No batch files found in: {batch_dir}\n"
+            f"  data_root={data_root!r}  dataset={dataset!r}  split={split!r}\n"
+            f"  Run build_batches.py to generate .npz files."
+        )
     return data.DataLoader(
         dataset=ds,
         batch_size=batch_size,
