@@ -70,7 +70,6 @@ class Aggregator(nn.Module):
             cascade_factor=cascade_factor, var_scale=var_scaling
         )
 
-        assert (norm_pre or norm_post)
         prenorm = PreNorm if norm_pre else lambda dim, fn, context_dim=None: fn
         postnorm = PostNorm if norm_post else nn.Identity
         ff = ThinFeedForward if thin_ff else FeedForward
