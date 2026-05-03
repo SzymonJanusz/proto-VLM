@@ -3,6 +3,7 @@ import math
 import os
 import os.path as osp
 
+import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
@@ -202,10 +203,11 @@ def validation(epoch, data_loader, model, criterion, recon_criterion, recon_weig
         feat_map_size = args.crop_size // 16
         cum_max_I = cum_max_U = cum_avg_I = cum_avg_U = 0.0
         max_mIoU = avg_mIoU = 0.0
+        vis_buf = []
 
         t = tqdm(range(len(dataset)), desc='IoU', leave=False)
         for i in t:
-            _, _, _, raw_label, _ = dataset.get_raw_item(i)
+            sentence, _, raw_img, raw_label, _ = dataset.get_raw_item(i)
             cm_a = cm_a_maps[i]
 
             top_idx = torch.argmax(cm_a)
@@ -227,6 +229,14 @@ def validation(epoch, data_loader, model, criterion, recon_criterion, recon_weig
                     100 * (cum_max_I / cum_max_U), 100 * (cum_avg_I / cum_avg_U))
             })
 
+            if not args.no_wandb and len(vis_buf) < args.vis_samples:
+                vis_buf.append({
+                    'img': np.array(raw_img),
+                    'pred': (a_max >= args.pseudo_threshold).astype(np.uint8),
+                    'gt': raw_label.astype(np.uint8),
+                    'caption': sentence[:60],
+                })
+
         n = len(dataset)
         val_dict = {
             'max_cIoU': 100.0 * cum_max_I / cum_max_U,
@@ -234,6 +244,23 @@ def validation(epoch, data_loader, model, criterion, recon_criterion, recon_weig
             'avg_cIoU': 100.0 * cum_avg_I / cum_avg_U,
             'avg_mIoU': avg_mIoU * 100.0 / n,
         }
+
+        if not args.no_wandb and vis_buf:
+            wandb.log({
+                'val/examples': [
+                    wandb.Image(
+                        v['img'],
+                        masks={
+                            'prediction':   {'mask_data': v['pred'], 'class_labels': {0: 'bg', 1: 'obj'}},
+                            'ground_truth': {'mask_data': v['gt'],   'class_labels': {0: 'bg', 1: 'obj'}},
+                        },
+                        caption=v['caption'],
+                    )
+                    for v in vis_buf
+                ],
+                'epoch': epoch,
+            })
+
         return losses.avg, {k: v.avg for k, v in losses_dict.items()}, val_dict
 
 
@@ -293,8 +320,6 @@ def main():
         model = model.cuda()
         cudnn.benchmark = True
 
-    if not args.no_wandb:
-        wandb.watch(model, log_freq=1000, log='gradients')
 
     recon_criterion = nn.MSELoss()
 

@@ -153,6 +153,8 @@ def make_parser():
     p.add_argument('--size_gamma', default=0.01, type=float)
     p.add_argument('--size_penalty', default=5, type=float)
     p.add_argument('--save_head_map', action='store_true')
+    p.add_argument('--vis_samples', type=int, default=8,
+                   help='Number of val images to log to W&B per epoch (0 = off)')
 
     return p
 
