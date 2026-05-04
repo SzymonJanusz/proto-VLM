@@ -12,7 +12,7 @@ from einops import rearrange, reduce
 from .aggregator import Aggregator
 from transformers import BertModel
 from pathlib import Path
-from timm.models.helpers import load_custom_pretrained
+import timm as _timm
 from .vit import VisionTransformer
 from timm.models.vision_transformer import default_cfgs
 from .attention import TransformerLayer
@@ -48,7 +48,14 @@ def get_img_backbone(arch, pretrained, num_layers, img_size):
         default_cfg["input_size"] = (3, cfg["image_size"][0], cfg["image_size"][1])
         _, _ = cfg.pop('normalization'), cfg.pop('backbone')
         model = VisionTransformer(**cfg)
-        load_custom_pretrained(model, default_cfg)
+        if pretrained:
+            try:
+                _ref = _timm.create_model(arch, pretrained=True)
+                missing, unexpected = model.load_state_dict(_ref.state_dict(), strict=False)
+                del _ref
+                print(f"[encoders] Pretrained {arch}: {len(missing)} missing, {len(unexpected)} unexpected keys")
+            except Exception as exc:
+                print(f"[encoders] Warning: pretrained load failed for {arch}: {exc}. Using random init.")
         feat_dim = cfg['d_model']
     else:
         model = torchvision.models.__dict__[arch](pretrained=pretrained)
