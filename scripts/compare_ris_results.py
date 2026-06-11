@@ -28,6 +28,9 @@ Dataset name cross-reference:
 Usage:
   python scripts/compare_ris_results.py
   python scripts/compare_ris_results.py --eval_dir eval_results --out eval_results/comparison.md
+
+  # Compare caption-signal ablation checkpoints (A/B/C) against baselines:
+  python scripts/compare_ris_results.py --ablation-dir eval_results
 """
 
 import argparse
@@ -74,6 +77,8 @@ def load_sag(eval_dir: str, dataset: str, split: str) -> Optional[dict]:
 def load_pnp(eval_dir: str, dataset: str, split: str) -> Optional[dict]:
     path = os.path.join(eval_dir, "pnp_refer", f"{dataset}_{split}.json")
     if not os.path.exists(path):
+        path = os.path.join(eval_dir, f"{dataset}_{split}.json")
+    if not os.path.exists(path):
         return None
     with open(path) as f:
         data = json.load(f)
@@ -119,12 +124,29 @@ def fmt(v: Optional[float]) -> str:
     return f"{v:.1f}"
 
 
-def build_table(eval_dir: str) -> str:
-    loaders = {
+ABLATION_VARIANTS = {
+    "A": ("PNP-A (word-only)",    "ablation_A"),
+    "B": ("PNP-B (caption-only)", "ablation_B"),
+    "C": ("PNP-C (combined)",     "ablation_C"),
+}
+
+
+def build_table(eval_dir: str, ablation_dir: Optional[str] = None) -> str:
+    loaders: dict = {
         "SaG":    load_sag,
         "CTRL-O": load_ctrlo,
-        "PNP":    load_pnp,
     }
+
+    if ablation_dir is not None:
+        for key, (label, subdir) in ABLATION_VARIANTS.items():
+            variant_dir = os.path.join(ablation_dir, subdir)
+            if os.path.isdir(variant_dir):
+                loaders[label] = lambda ed, ds, sp, d=variant_dir: load_pnp(d, ds, sp)
+            else:
+                print(f"Warning: ablation variant {key} not found at {variant_dir}",
+                      file=sys.stderr)
+    else:
+        loaders["PNP"] = load_pnp
 
     rows = []
     headers = ["Dataset", "Split", "Method", "oIoU (%)", "mIoU (%)", "Acc@0.5 (%)"]
@@ -191,7 +213,11 @@ def build_table(eval_dir: str) -> str:
 def main():
     p = argparse.ArgumentParser(description="Compare RIS results across methods")
     p.add_argument("--eval_dir", default="./eval_results",
-                   help="Root eval_results/ directory")
+                   help="Root eval_results/ directory (for SaG, CTRL-O, and base PNP)")
+    p.add_argument("--ablation-dir", default=None,
+                   help="Directory containing ablation_A/, ablation_B/, ablation_C/ subdirs "
+                        "(from slurm_eval_pnp_caption_ablation.sh). When set, shows the three "
+                        "caption-signal variants instead of a single PNP entry.")
     p.add_argument("--out", default=None,
                    help="Optional path to save the table as a .md file")
     args = p.parse_args()
@@ -201,7 +227,7 @@ def main():
         print("Run SaG, CTRL-O, and PNP eval scripts first.", file=sys.stderr)
         sys.exit(1)
 
-    table = build_table(args.eval_dir)
+    table = build_table(args.eval_dir, ablation_dir=args.ablation_dir)
     print(table)
 
     if args.out:
