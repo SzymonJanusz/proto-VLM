@@ -125,20 +125,30 @@ def fmt(v: Optional[float]) -> str:
 
 
 ABLATION_VARIANTS = {
-    "A": ("PNP-A (word-only)",    "ablation_A"),
-    "B": ("PNP-B (caption-only)", "ablation_B"),
-    "C": ("PNP-C (combined)",     "ablation_C"),
+    "caption_signal": {
+        "A": ("PNP-A (word-only)",    "ablation_A"),
+        "B": ("PNP-B (caption-only)", "ablation_B"),
+        "C": ("PNP-C (combined)",     "ablation_C"),
+    },
+    "vg_ablation": {
+        "A": ("PNP-A (KL + frozen)",    "ablation_A"),
+        "B": ("PNP-B (KL + residual)",  "ablation_B"),
+        "C": ("PNP-C (JSD + frozen)",   "ablation_C"),
+        "D": ("PNP-D (JSD + residual)", "ablation_D"),
+    },
 }
 
 
-def build_table(eval_dir: str, ablation_dir: Optional[str] = None) -> str:
+def build_table(eval_dir: str, ablation_dir: Optional[str] = None,
+                ablation_type: str = "caption_signal") -> str:
     loaders: dict = {
         "SaG":    load_sag,
         "CTRL-O": load_ctrlo,
     }
 
     if ablation_dir is not None:
-        for key, (label, subdir) in ABLATION_VARIANTS.items():
+        variants = ABLATION_VARIANTS.get(ablation_type, ABLATION_VARIANTS["caption_signal"])
+        for key, (label, subdir) in variants.items():
             variant_dir = os.path.join(ablation_dir, subdir)
             if os.path.isdir(variant_dir):
                 loaders[label] = lambda ed, ds, sp, d=variant_dir: load_pnp(d, ds, sp)
@@ -215,9 +225,14 @@ def main():
     p.add_argument("--eval_dir", default="./eval_results",
                    help="Root eval_results/ directory (for SaG, CTRL-O, and base PNP)")
     p.add_argument("--ablation-dir", default=None,
-                   help="Directory containing ablation_A/, ablation_B/, ablation_C/ subdirs "
-                        "(from slurm_eval_pnp_caption_ablation.sh). When set, shows the three "
-                        "caption-signal variants instead of a single PNP entry.")
+                   help="Directory containing ablation_A/, ablation_B/, ... subdirs. "
+                        "When set, shows per-variant PNP entries instead of a single PNP entry.")
+    p.add_argument("--ablation-type", default="caption_signal",
+                   choices=list(ABLATION_VARIANTS.keys()),
+                   help="Which ablation variant set to use. "
+                        "'caption_signal' = A/B/C (word-only/caption-only/combined); "
+                        "'vg_ablation' = A/B/C/D (KL×JSD × frozen×residual). "
+                        "Default: caption_signal")
     p.add_argument("--out", default=None,
                    help="Optional path to save the table as a .md file")
     args = p.parse_args()
@@ -227,7 +242,8 @@ def main():
         print("Run SaG, CTRL-O, and PNP eval scripts first.", file=sys.stderr)
         sys.exit(1)
 
-    table = build_table(args.eval_dir, ablation_dir=args.ablation_dir)
+    table = build_table(args.eval_dir, ablation_dir=args.ablation_dir,
+                        ablation_type=args.ablation_type)
     print(table)
 
     if args.out:
