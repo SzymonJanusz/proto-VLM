@@ -136,6 +136,14 @@ ABLATION_VARIANTS = {
         "C": ("PNP-C (JSD + frozen)",   "ablation_C"),
         "D": ("PNP-D (JSD + residual)", "ablation_D"),
     },
+    "vg_long": {
+        "A": ("PNP-A-long (KL + frozen, 80ep)",  "long_A"),
+        "C": ("PNP-C-long (JSD + frozen, 80ep)", "long_C"),
+    },
+    "vg_dedup": {
+        "A": ("PNP-A-dedup (KL + frozen, dedup)",  "dedup_A"),
+        "C": ("PNP-C-dedup (JSD + frozen, dedup)", "dedup_C"),
+    },
 }
 
 
@@ -231,7 +239,9 @@ def main():
                    choices=list(ABLATION_VARIANTS.keys()),
                    help="Which ablation variant set to use. "
                         "'caption_signal' = A/B/C (word-only/caption-only/combined); "
-                        "'vg_ablation' = A/B/C/D (KL×JSD × frozen×residual). "
+                        "'vg_ablation' = A/B/C/D (KL×JSD × frozen×residual); "
+                        "'vg_long' = A/C (frozen residual, 80 epochs); "
+                        "'vg_dedup' = A/C (frozen residual, deduplicated vocab). "
                         "Default: caption_signal")
     p.add_argument("--out", default=None,
                    help="Optional path to save the table as a .md file")
