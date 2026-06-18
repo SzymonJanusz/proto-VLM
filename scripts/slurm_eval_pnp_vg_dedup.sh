@@ -26,9 +26,13 @@
 #   DEDUP_BASE   Base dir with run_A_kl_frozen_dedup_t090 / run_C_jsd_frozen_dedup_t090
 #   DATA_ROOT    Path to refcoco/ directory
 #   THRESHOLD    Threshold string used in training (default: 090)
+#   EP_SUFFIX    Optional epoch suffix appended to checkpoint dirs, e.g. "_40ep"
+#                (default: empty → uses the original 20-epoch dirs)
+#                Use EP_SUFFIX=_40ep for the longer PNP-A-dedup run.
 #
 # Usage:
-#   bash scripts/slurm_eval_pnp_vg_dedup.sh
+#   bash scripts/slurm_eval_pnp_vg_dedup.sh                      # 20ep run
+#   EP_SUFFIX=_40ep bash scripts/slurm_eval_pnp_vg_dedup.sh      # 40ep run (A only)
 
 set -e
 
@@ -37,6 +41,7 @@ REPO=~/proto-VLM
 DEDUP_BASE="${DEDUP_BASE:-${SCRATCH}/train_logs/vg_dedup}"
 DATA_ROOT="${DATA_ROOT:-${SCRATCH}/data/refcoco}"
 THRESHOLD="${THRESHOLD:-090}"
+EP_SUFFIX="${EP_SUFFIX:-}"
 
 PARTITION="plgrid-gpu-a100"
 ACCOUNT="plgunhype-gpu-a100"
@@ -45,13 +50,13 @@ LOG_SLURM="${SCRATCH}/logs"
 mkdir -p "${LOG_SLURM}"
 
 declare -A CKPTS=(
-  [A]="${DEDUP_BASE}/run_A_kl_frozen_dedup_t${THRESHOLD}/ckpt.pth"
-  [C]="${DEDUP_BASE}/run_C_jsd_frozen_dedup_t${THRESHOLD}/ckpt.pth"
+  [A]="${DEDUP_BASE}/run_A_kl_frozen_dedup_t${THRESHOLD}${EP_SUFFIX}/ckpt.pth"
+  [C]="${DEDUP_BASE}/run_C_jsd_frozen_dedup_t${THRESHOLD}${EP_SUFFIX}/ckpt.pth"
 )
 
 declare -A LABELS=(
-  [A]="KL + frozen residual (dedup vocab θ=0.${THRESHOLD})"
-  [C]="JSD + frozen residual (dedup vocab θ=0.${THRESHOLD})"
+  [A]="KL + frozen residual (dedup vocab θ=0.${THRESHOLD}${EP_SUFFIX})"
+  [C]="JSD + frozen residual (dedup vocab θ=0.${THRESHOLD}${EP_SUFFIX})"
 )
 
 declare -A SPLITS=(
@@ -60,30 +65,38 @@ declare -A SPLITS=(
   [unc+]="val testA testB"
 )
 
-echo "=== PNP Dedup-Vocab Ablation — Zero-shot RIS Evaluation (θ=0.${THRESHOLD}) ==="
+# When EP_SUFFIX is set, only A has the long checkpoint; skip C if it doesn't exist.
+if [ -n "${EP_SUFFIX}" ] && [ ! -f "${CKPTS[C]}" ]; then
+    VARIANTS="A"
+    echo "Note: C checkpoint not found for suffix '${EP_SUFFIX}' — evaluating A only."
+else
+    VARIANTS="A C"
+fi
+
+echo "=== PNP Dedup-Vocab Ablation — Zero-shot RIS Evaluation (θ=0.${THRESHOLD}${EP_SUFFIX}) ==="
 echo "  Ckpt A : ${CKPTS[A]}"
 echo "  Ckpt C : ${CKPTS[C]}"
 echo "  Data   : ${DATA_ROOT}"
-echo "  Results: eval_results/vg_dedup/dedup_{A,C}/pnp_refer/"
+echo "  Results: eval_results/vg_dedup/dedup_{A,C}${EP_SUFFIX}/pnp_refer/"
 echo ""
 
-for VARIANT in A C; do
+for VARIANT in ${VARIANTS}; do
   CKPT="${CKPTS[$VARIANT]}"
-  OUT_DIR="${REPO}/eval_results/vg_dedup/dedup_${VARIANT}"
+  OUT_DIR="${REPO}/eval_results/vg_dedup/dedup_${VARIANT}${EP_SUFFIX}"
   echo "-- Variant ${VARIANT} (${LABELS[$VARIANT]}) --"
 
   for DATASET in Gref unc unc+; do
     for SPLIT in ${SPLITS[$DATASET]}; do
       JOB=$(sbatch --parsable \
-        --job-name="pnp-ded${VARIANT}-${DATASET}-${SPLIT}" \
+        --job-name="pnp-ded${VARIANT}${EP_SUFFIX}-${DATASET}-${SPLIT}" \
         --partition="${PARTITION}" \
         --account="${ACCOUNT}" \
         --gres=gpu:1 \
         --cpus-per-task=4 \
         --mem=32G \
         --time=04:00:00 \
-        --output="${LOG_SLURM}/pnp_dedup_${VARIANT}_${DATASET}_${SPLIT}_%j.out" \
-        --error="${LOG_SLURM}/pnp_dedup_${VARIANT}_${DATASET}_${SPLIT}_%j.err" \
+        --output="${LOG_SLURM}/pnp_dedup_${VARIANT}${EP_SUFFIX}_${DATASET}_${SPLIT}_%j.out" \
+        --error="${LOG_SLURM}/pnp_dedup_${VARIANT}${EP_SUFFIX}_${DATASET}_${SPLIT}_%j.err" \
         --wrap="
 set -e
 source ${SCRATCH}/venv/bin/activate
@@ -104,7 +117,7 @@ python scripts/evaluate_pnp_refer.py \
   echo ""
 done
 
-echo "All 14 jobs submitted. Monitor with: squeue -u \$USER"
+echo "Jobs submitted. Monitor with: squeue -u \$USER"
 echo ""
 echo "After completion, generate comparison table with:"
 echo "  python scripts/compare_ris_results.py \\"
