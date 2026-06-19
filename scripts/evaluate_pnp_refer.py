@@ -166,11 +166,19 @@ def evaluate(args):
         )
     print(f"Dataset: {args.dataset} / {args.data_split}  ({len(ds)} samples)")
 
-    # ── Eval loop ──────────────────────────────────────────────────────────
-    total_I = 0
-    total_U = 0
-    per_sample = []
+    # ── Threshold list ─────────────────────────────────────────────────────
+    # --threshold-sweep overrides --threshold when provided
+    thresholds = sorted(set(args.threshold_sweep if args.threshold_sweep else [args.threshold]))
+    sweep_mode = len(thresholds) > 1
+    if sweep_mode:
+        print(f"Threshold sweep: {thresholds}")
 
+    # Per-threshold accumulators
+    total_I  = {t: 0 for t in thresholds}
+    total_U  = {t: 0 for t in thresholds}
+    per_sample = {t: [] for t in thresholds}
+
+    # ── Eval loop ──────────────────────────────────────────────────────────
     for i in tqdm(range(len(ds)), desc=f"Eval {args.dataset}/{args.data_split}"):
         sentence, img_id, pil_img, gt_mask, _ = ds.get_raw_item(i)
 
@@ -201,50 +209,62 @@ def evaluate(args):
                                 align_corners=False)           # [1, 1, H_gt, W_gt]
         activation = spatial.squeeze().cpu().numpy()           # [H_gt, W_gt]
 
-        # Normalize to [0, 1] then threshold
+        # Normalize to [0, 1] once; apply all thresholds in one pass
         a_min, a_max = activation.min(), activation.max()
         if a_max > a_min:
             activation = (activation - a_min) / (a_max - a_min + 1e-8)
-        pred_mask = (activation >= args.threshold).astype(np.uint8)
 
         gt_bin = (gt_mask > 0).astype(np.uint8)
-        I, U = mask_IU(pred_mask, gt_bin)
-        sample_iou = float(I) / (float(U) + 1e-8) if U > 0 else 0.0
+        for t in thresholds:
+            pred_mask = (activation >= t).astype(np.uint8)
+            I, U = mask_IU(pred_mask, gt_bin)
+            sample_iou = float(I) / (float(U) + 1e-8) if U > 0 else 0.0
+            total_I[t] += I
+            total_U[t] += U
+            per_sample[t].append({
+                "img_id": img_id,
+                "index": i,
+                "iou": round(sample_iou, 6),
+            })
 
-        total_I += I
-        total_U += U
-        per_sample.append({
-            "img_id": img_id,
-            "index": i,
-            "iou": round(sample_iou, 6),
-        })
-
-    c_iou = 100.0 * total_I / (total_U + 1e-8)
-    m_iou = 100.0 * float(np.mean([s["iou"] for s in per_sample]))
-
-    summary = {
-        "cIoU": round(c_iou, 4),
-        "mIoU": round(m_iou, 4),
-        "n_samples": len(per_sample),
-    }
-    print(f"\nResults — cIoU: {c_iou:.2f}%  mIoU: {m_iou:.2f}%  (n={len(per_sample)})")
-
-    # ── Save JSON ──────────────────────────────────────────────────────────
+    # ── Save JSON (one per threshold) ──────────────────────────────────────
     out_dir = os.path.join(args.out_dir, "pnp_refer")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"{args.dataset}_{args.data_split}.json")
 
-    result = {
-        "dataset": args.dataset,
-        "split": args.data_split,
-        "ckpt": args.ckpt,
-        "threshold": args.threshold,
-        "summary": summary,
-        "per_sample": per_sample,
-    }
-    with open(out_path, "w") as f:
-        json.dump(result, f, indent=2)
-    print(f"Results saved to {out_path}")
+    print(f"\n{'Threshold':>10}  {'oIoU (%)':>10}  {'mIoU (%)':>10}  n")
+    print("-" * 42)
+
+    for t in thresholds:
+        c_iou = 100.0 * total_I[t] / (total_U[t] + 1e-8)
+        m_iou = 100.0 * float(np.mean([s["iou"] for s in per_sample[t]]))
+        n = len(per_sample[t])
+        print(f"{t:>10.2f}  {c_iou:>10.2f}  {m_iou:>10.2f}  {n}")
+
+        # Filename: dataset_split.json for single threshold (backward compat),
+        # dataset_split_tXXX.json for sweep (XXX = threshold × 100, zero-padded).
+        if sweep_mode:
+            t_str = f"{int(round(t * 100)):03d}"
+            fname = f"{args.dataset}_{args.data_split}_t{t_str}.json"
+        else:
+            fname = f"{args.dataset}_{args.data_split}.json"
+
+        result = {
+            "dataset": args.dataset,
+            "split": args.data_split,
+            "ckpt": args.ckpt,
+            "threshold": t,
+            "summary": {
+                "cIoU": round(c_iou, 4),
+                "mIoU": round(m_iou, 4),
+                "n_samples": n,
+            },
+            "per_sample": per_sample[t],
+        }
+        out_path = os.path.join(out_dir, fname)
+        with open(out_path, "w") as f:
+            json.dump(result, f, indent=2)
+
+    print(f"\nResults saved to {out_dir}/")
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +283,13 @@ def parse_args():
     p.add_argument("--out_dir", default="./eval_results",
                    help="Output directory (results go to out_dir/pnp_refer/)")
     p.add_argument("--threshold", type=float, default=0.5,
-                   help="Threshold on normalized activation map for binary mask")
+                   help="Threshold on normalized activation map for binary mask "
+                        "(single value; use --threshold-sweep for ablation)")
+    p.add_argument("--threshold-sweep", type=float, nargs="+", default=None,
+                   metavar="T",
+                   help="Sweep over multiple thresholds in a single forward pass. "
+                        "Overrides --threshold. Saves one JSON per value with _tXXX suffix. "
+                        "Example: --threshold-sweep 0.3 0.4 0.5 0.6 0.7")
     p.add_argument("--device", default="cuda", choices=("cuda", "cpu"))
     return p.parse_args()
 
