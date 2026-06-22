@@ -109,7 +109,8 @@ python scripts/evaluate_pnp_refer.py \
 echo ''
 echo '--- Summary ep${EP_NUM} ---'
 python -c \"
-import json, sys
+import json
+ep_num = ${EP_NUM}
 path = '${OUT_DIR}/pnp_refer/Gref_val.json'
 with open(path) as f: r = json.load(f)
 s = r['summary']
@@ -119,7 +120,7 @@ if oiou < 5:
     flag = '  *** COLLAPSE DETECTED ***'
 elif oiou < 10:
     flag = '  !! LOW — check carefully'
-print(f'  Epoch ${EP_NUM:>3}  oIoU: {oiou:5.1f}%   mIoU: {miou:5.1f}%{flag}')
+print(f'  Epoch {ep_num:>3}  oIoU: {oiou:5.1f}%   mIoU: {miou:5.1f}%{flag}')
 \"
 ")
 
