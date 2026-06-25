@@ -144,6 +144,10 @@ ABLATION_VARIANTS = {
         "A": ("PNP-A-dedup (KL + frozen, dedup)",  "dedup_A"),
         "C": ("PNP-C-dedup (JSD + frozen, dedup)", "dedup_C"),
     },
+    "vg_contrastive": {
+        "A": ("PNP-A (uniform + contrastive=0.5, 30ep)", "contr_A"),
+        "B": ("PNP-B (uniform + contrastive=1.0, 30ep)", "contr_B"),
+    },
 }
 
 
@@ -241,7 +245,8 @@ def main():
                         "'caption_signal' = A/B/C (word-only/caption-only/combined); "
                         "'vg_ablation' = A/B/C/D (KL×JSD × frozen×residual); "
                         "'vg_long' = A/C (frozen residual, 80 epochs); "
-                        "'vg_dedup' = A/C (frozen residual, deduplicated vocab). "
+                        "'vg_dedup' = A/C (frozen residual, deduplicated vocab); "
+                        "'vg_contrastive' = A/B (uniform + InfoNCE, 30 epochs). "
                         "Default: caption_signal")
     p.add_argument("--out", default=None,
                    help="Optional path to save the table as a .md file")
