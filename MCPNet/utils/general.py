@@ -190,73 +190,24 @@ def cal_acc(feats, class_MCP, concept_vecs, concept_means, args):
     return torch.topk(-Diff_centroid_dist_resp, dim = 1, k = 1)[1], \
            torch.topk(-Diff_centroid_dist_resp, dim = 1, k = 5)[1]
 
-def get_dataset(case_name: str) -> Tuple[str, str, str, int]:
-    if "AWA2" in case_name:
-        print("Using AWA2")
-        data_path = "/eva_data_4/bor/datasets/Animals_with_Attributes2/JPEGImages/"
-        train_path = "train"
-        val_path = "val"
-        num_class = 50
-    elif "CUB" in case_name:
-        print("Using CUB")
-        data_path = "/eva_data_4/bor/datasets/CUB_200_2011/"
-        train_path = "train"
-        val_path = "val"
-        num_class = 200
-    elif "Stanford" in case_name:
-        print("Using StanfordCar")
-        data_path = "/eva_data_4/bor/datasets/stanford car/"
-        train_path = "cars_train"
-        val_path = "cars_test"
-        num_class = 196
-    elif "Caltech101" in case_name:
-        print("Using Caltech101")
-        data_path = "/eva_data_4/bor/datasets/101_ObjectCategories/"
-        train_path = "train"
-        val_path = "val"
-        num_class = 101
-    elif "Food" in case_name:
-        print("Using Food101")
-        data_path = "/eva_data_4/bor/datasets/food-101/"
-        train_path = "train"
-        val_path = "test"
-        num_class = 101
-    elif "SYN" in case_name:
-        print("Using SYN")
-        data_path = "/eva_data_4/bor/datasets/Synthetic/"
-        train_path = "train/raw"
-        val_path = "val/raw"
-        num_class = 15
-    elif "ImageNet" in case_name:
-        print("Using SYN")
-        data_path = "/eva_data_4/bor/datasets/ImageNet2012/"
-        train_path = "train_sampled"
-        val_path = "val"
-        num_class = 1000
+_DATASET_REGISTRY: dict[str, Tuple[str, str, str, int]] = {
+    "AWA2":       ("/eva_data_4/bor/datasets/Animals_with_Attributes2/JPEGImages/", "train", "val", 50),
+    "CUB":        ("/eva_data_4/bor/datasets/CUB_200_2011/", "train", "val", 200),
+    "Stanford":   ("/eva_data_4/bor/datasets/stanford car/", "cars_train", "cars_test", 196),
+    "Caltech101": ("/eva_data_4/bor/datasets/101_ObjectCategories/", "train", "val", 101),
+    "Food":       ("/eva_data_4/bor/datasets/food-101/", "train", "test", 101),
+    "SYN":        ("/eva_data_4/bor/datasets/Synthetic/", "train/raw", "val/raw", 15),
+    "ImageNet":   ("/eva_data_4/bor/datasets/ImageNet2012/", "train_sampled", "val", 1000),
+}
 
-    return data_path, train_path, val_path, num_class
+def get_dataset(case_name: str) -> Tuple[str, str, str, int]:
+    for key, val in _DATASET_REGISTRY.items():
+        if key in case_name:
+            return val
+    raise ValueError(f"Unknown dataset: {case_name}")
 
 def get_model_set(args):
-    if args.basic_model == "resnet50":
-        image_size = 224
-    elif args.basic_model == "resnet34":
-        image_size = 224
-    elif args.basic_model == "resnet50_relu":
-        image_size = 224
-    elif args.basic_model == "vgg13":
-        image_size = 224
-    elif args.basic_model == "inceptionv3":
-        image_size = 299
-    elif args.basic_model == "mobilenet":
-        image_size = 224
-    elif args.basic_model == "mobilenet_relu":
-        image_size = 224
-    elif args.basic_model == "densenet":
-        image_size = 224
-    elif args.basic_model == "convnext_tiny":
-        image_size = 224
-    if args.basic_model == "vit_b_16":
-        image_size = 224
+    image_size = 299 if args.basic_model == "inceptionv3" else 224
     return args, image_size
 
 def load_weight(model: torch.nn.Module, path: str, use_teacher: bool = False) -> None:

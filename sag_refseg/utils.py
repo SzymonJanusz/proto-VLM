@@ -99,9 +99,8 @@ SENTENCE_SPLIT_REGEX = re.compile(r'(\W+)')
 
 def load_vocab_dict_from_file(dict_file):
     with open(dict_file) as f:
-        words = [w.strip() for w in f.readlines()]
-    vocab_dict = {words[n]: n for n in range(len(words))}
-    return vocab_dict
+        words = [w.strip() for w in f]
+    return {w: i for i, w in enumerate(words)}
 
 
 def sentence2vocab_indices(sentence, vocab_dict):
