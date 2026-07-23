@@ -181,12 +181,19 @@ def evaluate_split(
     limit: int = 0,
     single_sentence: bool = False,
 ) -> tuple:
-    """Returns (per_ref_results, summary_dict)."""
+    """Returns (per_ref_results, per_sentence_results, summary_dict).
+
+    per_ref is oracle (best-of-sentences IoU per reference); per_sentence is
+    one row per referring expression (needed for e.g. mIoU-vs-expression-length
+    analyses, where per-reference oracle pooling would hide the per-expression
+    signal).
+    """
     ref_ids = refer.getRefIds(split=split)
     if limit > 0:
         ref_ids = ref_ids[:limit]
 
     per_ref = []
+    per_sentence = []
     # oracle accumulators: max IoU over sentences per reference
     correct_mask_oracle = correct_box_oracle = n_refs = missing = 0
     sum_mask_iou_oracle = sum_box_iou_oracle = 0.0
@@ -249,6 +256,14 @@ def evaluate_split(
             cum_mask_U_avg   += mU
             n_sents += 1
 
+            per_sentence.append({
+                "ref_id": ref_id,
+                "split": split,
+                "sentence": expr,
+                "mask_iou": round(sent_miou, 6),
+                "box_iou": round(sent_biou, 6),
+            })
+
             # oracle tracking (keep best sentence per reference)
             if sent_miou > best_miou:
                 best_miou = sent_miou
@@ -303,7 +318,7 @@ def evaluate_split(
         f"  [{split}] sent-avg Acc@0.5 mask={summary['acc_mask_0.5_avg']:.4f} | "
         f"mIoU mask={summary['miou_mask_avg']:.4f}  oIoU mask={summary['omiou_mask_avg']:.4f}  (n_sent={n_sents})"
     )
-    return per_ref, summary
+    return per_ref, per_sentence, summary
 
 
 # ---------------------------------------------------------------------------
@@ -355,20 +370,25 @@ def main():
     refer = REFER(args.data_root, dataset=args.dataset, splitBy=args.splitBy)
 
     all_per_ref = []
+    all_per_sentence = []
     summary = {}
 
     for split in args.splits:
         print(f"\n=== {args.dataset} / {split} ===")
-        per_ref, split_summary = evaluate_split(
+        per_ref, per_sentence, split_summary = evaluate_split(
             refer, split, model, args.image_root,
             limit=args.limit, single_sentence=args.single_sentence,
         )
         all_per_ref.extend(per_ref)
+        all_per_sentence.extend(per_sentence)
         summary[split] = split_summary
 
     out_file = os.path.join(args.output_dir, f"{args.dataset}_metrics.json")
     with open(out_file, "w") as f:
-        json.dump({"summary": summary, "per_ref": all_per_ref}, f, indent=2)
+        json.dump(
+            {"summary": summary, "per_ref": all_per_ref, "per_sentence": all_per_sentence},
+            f, indent=2,
+        )
     print(f"\n==> Results saved to {out_file}")
 
     # Print final table
